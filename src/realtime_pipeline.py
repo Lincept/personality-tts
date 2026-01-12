@@ -24,16 +24,29 @@ class RealtimeStreamingPipeline:
 
         Args:
             llm_stream: LLM 流式输出生成器
-            realtime_tts_client: Qwen3RealtimeTTS 客户端
+            realtime_tts_client: 实时 TTS 客户端 (Qwen3RealtimeTTS 或 VolcengineRealtimeTTS)
             streaming_player: StreamingAudioPlayer 播放器
             display_text: 是否显示文本
         """
-        # 启动 TTS 会话
-        audio_queue = realtime_tts_client.start_session(
-            mode="server_commit",  # 服务端自动断句
-            audio_format="pcm",
-            sample_rate=24000
-        )
+        # 启动 TTS 会话 - 根据客户端类型使用不同参数
+        client_type = type(realtime_tts_client).__name__
+
+        if client_type == "Qwen3RealtimeTTS":
+            # Qwen3 支持 mode 参数
+            audio_queue = realtime_tts_client.start_session(
+                mode="server_commit",  # 服务端自动断句
+                audio_format="pcm",
+                sample_rate=24000
+            )
+        elif client_type == "VolcengineRealtimeTTS":
+            # 火山引擎不支持 mode 参数
+            audio_queue = realtime_tts_client.start_session(
+                audio_format="mp3",
+                sample_rate=24000
+            )
+        else:
+            # 默认调用（不传参数）
+            audio_queue = realtime_tts_client.start_session()
 
         # 启动播放器线程
         player_thread = threading.Thread(
@@ -74,8 +87,9 @@ class RealtimeStreamingPipeline:
         print('\n' + '-' * 60)
         print('[管道] LLM 输出完成，等待 TTS 和播放完成...')
 
-        # 等待 TTS 完成
-        realtime_tts_client.wait_for_completion(timeout=30)
+        # 等待 TTS 完成 - 根据客户端类型
+        if hasattr(realtime_tts_client, 'wait_for_completion'):
+            realtime_tts_client.wait_for_completion(timeout=30)
 
         # 等待播放完成
         player_thread.join(timeout=10)
@@ -86,6 +100,10 @@ class RealtimeStreamingPipeline:
         print(f'  会话 ID: {metrics.get("session_id")}')
         print(f'  首音频延迟: {metrics.get("first_audio_delay", 0):.3f}秒')
         print(f'  总文本长度: {len("".join(full_text))} 字符')
+
+        # 如果是火山引擎，断开连接
+        if client_type == "VolcengineRealtimeTTS":
+            realtime_tts_client.disconnect()
 
         return {
             "text": "".join(full_text),

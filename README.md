@@ -1,261 +1,343 @@
-# LLM + TTS API 测试项目
+# LLM + TTS 语音助手
 
-这个项目用于测试大语言模型(LLM)与文本转语音(TTS)服务的集成效果。
+一个集成了大语言模型（LLM）和文本转语音（TTS）的实时语音助手系统。
 
 ## 功能特性
 
-- ✅ 支持 OpenAI 兼容的 LLM API (流式输出)
-- ✅ 支持三种 TTS 服务:
-  - Qwen3 TTS (通义千问3)
-  - 火山引擎 Seed2
-  - MiniMax TTS
-- ✅ 实时音频播放
-- ✅ 交互式对话模式
-- ✅ TTS 提供商对比测试
+- ✅ **多 LLM 支持**：支持 OpenAI 兼容的 API（如 DeepSeek、Qwen 等）
+- ✅ **多 TTS 支持**：支持 Qwen3 TTS、火山引擎 Seed2、MiniMax
+- ✅ **实时流式对话**：LLM 逐字输出 → TTS 实时合成 → 边接收边播放
+- ✅ **智能 Prompt 系统**：专为语音对话优化，控制输出格式
+- ✅ **多角色支持**：默认助手、轻松助手、专业助手、陪伴助手
+- ✅ **上下文管理**：用户信息、知识库、对话历史自动管理
 
 ## 项目结构
 
 ```
 llm-tts-api-test/
 ├── config/
-│   ├── api_keys.json          # API 密钥配置
 │   └── test_config.json       # 测试配置
 ├── src/
+│   ├── audio/                 # 音频播放模块
+│   │   ├── player.py          # 基础音频播放器
+│   │   ├── streaming_player.py # 流式音频播放器（ffplay）
+│   │   └── pyaudio_player.py  # 流式音频播放器（PyAudio）
 │   ├── llm/
-│   │   └── llm_client.py      # LLM 客户端
-│   ├── tts/
-│   │   ├── qwen3_tts.py       # Qwen3 TTS
-│   │   ├── volcengine_tts.py  # 火山引擎 TTS
+│   │   └── llm_client.py      # LLM 客户端封装
+│   ├── tts/                   # TTS 客户端
+│   │   ├── qwen3_tts.py       # 通义千问 TTS
+│   │   ├── qwen3_realtime_tts.py # 通义千问实时 TTS
+│   │   ├── volcengine_tts.py  # 火山引擎 Seed2
 │   │   └── minimax_tts.py     # MiniMax TTS
-│   ├── audio/
-│   │   └── player.py          # 音频播放器
-│   └── main.py                # 主测试脚本
-├── data/
-│   └── audios/                # 生成的音频文件
+│   ├── config_loader.py       # 配置加载器
+│   ├── streaming_pipeline.py  # 流式处理管道
+│   ├── realtime_pipeline.py   # 实时处理管道
+│   ├── text_cleaner.py        # 文本清理工具
+│   ├── voice_assistant_prompt.py # Prompt 管理系统
+│   └── main.py                # 主程序
+├── .env.example               # 环境变量示例
 ├── requirements.txt           # Python 依赖
-└── README.md                  # 项目说明
+├── README.md                  # 本文件
+└── VOICE_ASSISTANT_PROMPT.md  # Prompt 系统详细文档
 ```
 
-## 安装
+## 快速开始
 
-1. 克隆或下载项目
+### 1. 安装依赖
 
-2. 安装依赖:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. 配置 API 密钥:
+### 2. 配置 API 密钥
 
-编辑 `config/api_keys.json` 文件,填入你的 API 密钥:
-
-```json
-{
-  "qwen3_tts": {
-    "api_key": "YOUR_QWEN3_API_KEY"
-  },
-  "volcengine_seed2": {
-    "app_id": "YOUR_VOLCENGINE_APP_ID",
-    "access_token": "YOUR_VOLCENGINE_ACCESS_TOKEN"
-  },
-  "minimax": {
-    "api_key": "YOUR_MINIMAX_API_KEY",
-    "group_id": "YOUR_MINIMAX_GROUP_ID"
-  },
-  "openai_compatible": {
-    "api_key": "YOUR_OPENAI_API_KEY",
-    "base_url": "https://api.openai.com/v1",
-    "model": "gpt-4"
-  }
-}
-```
-
-## 使用方法
-
-### 1. 交互式模式 (推荐)
+复制 `.env.example` 为 `.env`，填入你的 API 密钥：
 
 ```bash
-python src/main.py interactive
+cp .env.example .env
 ```
 
-或直接运行:
+编辑 `.env` 文件：
+
+```env
+# LLM API (OpenAI 兼容)
+OPENAI_API_KEY=your_api_key
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_MODEL=deepseek-chat
+
+# Qwen3 TTS
+QWEN3_TTS_API_KEY=your_qwen3_key
+
+# 火山引擎 Seed2 TTS
+VOLCENGINE_APP_ID=your_app_id
+VOLCENGINE_ACCESS_TOKEN=your_token
+
+# MiniMax TTS
+MINIMAX_API_KEY=your_minimax_key
+MINIMAX_GROUP_ID=your_group_id
+```
+
+### 3. 运行语音助手
 
 ```bash
 python src/main.py
 ```
 
-**交互式命令:**
-- 直接输入文字进行对话
-- `/quit` - 退出程序
-- `/provider <name>` - 切换 TTS 提供商 (qwen3/volcengine/minimax)
-- `/compare` - 对比所有 TTS 提供商的效果
-- `/voices` - 查看当前 TTS 的可用语音
-
-### 2. 快速测试
+或者明确指定交互模式：
 
 ```bash
-python src/main.py test
+python src/main.py interactive
 ```
 
-### 3. 对比测试
+## 使用指南
 
-```bash
-python src/main.py compare
+### 交互命令
+
+启动后，你可以使用以下命令：
+
+```
+/quit                    # 退出程序
+/mode                    # 切换模式 (realtime/streaming/normal)
+/role <角色>             # 切换角色 (default/casual/professional/companion)
+/clear                   # 清空对话历史
+/history                 # 查看对话历史
+/setname <名字>          # 设置用户名
+/addknowledge <内容>     # 添加知识库
+/info                    # 查看当前配置
 ```
 
-## 示例
+### 示例对话
 
-### 基本对话
+```
+你: /role casual
+✓ 已切换到角色: 轻松助手
+  风格: 轻松聊天
+  特点: 活泼、幽默、随和
+
+你: /setname 小明
+✓ 用户名已设置为: 小明
+
+你: /addknowledge 喜欢攀岩
+✓ 已添加知识: 喜欢攀岩
+
+你: 推荐一些周末活动
+助手: 小明你好！既然你喜欢攀岩，周末可以去攀岩馆练练手。要不要我推荐几个地方？
+
+你: /info
+当前配置:
+  模式: 实时模式 (LLM逐字→TTS→边播边放) ⚡
+  角色: 轻松助手 (活泼、幽默、随和)
+  TTS: qwen3
+  对话轮数: 1
+  知识库条目: 1
+```
+
+## 三种对话模式
+
+### 1. 实时模式（Realtime）⚡
+
+**最快**，延迟最低：
+- LLM 逐字输出
+- TTS 实时接收并合成
+- 音频边接收边播放
 
 ```python
-from src.main import LLMTTSTest
+# 仅支持 Qwen3 实时 TTS
+test.chat_and_speak_realtime("你好")
+```
 
-test = LLMTTSTest()
-test.chat_and_speak(
-    prompt="你好,请介绍一下你自己",
-    tts_provider="qwen3",
-    play_audio=True,
-    stream=True
+### 2. 流式模式（Streaming）
+
+**较快**，按句播放：
+- LLM 流式输出
+- 按句子分割
+- 每句合成后立即播放
+
+```python
+test.chat_and_speak_streaming("你好", tts_provider="qwen3")
+```
+
+### 3. 普通模式（Normal）
+
+**最稳定**，等待完整回复：
+- 等待 LLM 完整回复
+- 一次性合成
+- 播放完整音频
+
+```python
+test.chat_and_speak("你好", tts_provider="qwen3")
+```
+
+## Prompt 系统
+
+本项目包含专为语音对话优化的 Prompt 系统，详见 [VOICE_ASSISTANT_PROMPT.md](VOICE_ASSISTANT_PROMPT.md)。
+
+### 核心特性
+
+1. **输出格式控制**
+   - 简洁回答（2-3 句话，最多 50 字）
+   - 禁止 Markdown 格式
+   - 禁止特殊符号和列表
+   - 口语化表达
+
+2. **多角色支持**
+   - `default` - 默认助手（友好、专业、简洁）
+   - `casual` - 轻松助手（活泼、幽默、随和）
+   - `professional` - 专业助手（严谨、专业、高效）
+   - `companion` - 陪伴助手（温暖、关心、耐心）
+
+3. **上下文管理**
+   - 用户信息（姓名、偏好、上下文）
+   - 知识库（可添加自定义知识）
+   - 对话历史（自动保留最近 10 轮）
+
+### 使用示例
+
+```python
+from src.voice_assistant_prompt import VoiceAssistantPrompt
+
+# 创建 Prompt 管理器
+prompt = VoiceAssistantPrompt(role="casual")
+
+# 设置用户信息
+prompt.set_user_info(
+    name="小明",
+    preferences={"运动": "攀岩"}
 )
-```
 
-### 对比不同 TTS 提供商
+# 添加知识
+prompt.add_knowledge("用户是攀岩初学者", category="运动")
 
-```python
-test = LLMTTSTest()
-test.compare_tts_providers(
-    prompt="今天天气真不错,适合出去散步",
-    play_audio=True
-)
-```
+# 获取消息列表
+messages = prompt.get_messages("推荐一些攀岩装备")
 
-## API 说明
-
-### LLM 客户端
-
-```python
-from src.llm.llm_client import LLMClient
-
-client = LLMClient(
-    api_key="your_api_key",
-    base_url="https://api.openai.com/v1",
-    model="gpt-4"
-)
-
-# 流式对话
-for chunk in client.chat_stream(messages=[...]):
-    print(chunk, end="")
-```
-
-### TTS 客户端
-
-```python
-from src.tts.qwen3_tts import Qwen3TTS
-
-tts = Qwen3TTS(api_key="your_api_key")
-result = tts.synthesize(
-    text="你好世界",
-    output_path="output.mp3"
-)
-```
-
-### 音频播放
-
-```python
-from src.audio.player import AudioPlayer
-
-player = AudioPlayer()
-player.play("audio.mp3", blocking=True)
+# 传递给 LLM
+response = llm_client.chat(messages)
 ```
 
 ## 配置说明
 
-### test_config.json
+### LLM 配置
 
-```json
-{
-  "tts_providers": ["qwen3", "volcengine", "minimax"],
-  "default_voice": {
-    "qwen3": "zhifeng_emo",
-    "volcengine": "zh_female_qingxin",
-    "minimax": "female-tianmei"
-  },
-  "audio_format": "mp3",
-  "sample_rate": 24000,
-  "output_dir": "data/audios",
-  "llm_config": {
-    "temperature": 0.7,
-    "max_tokens": 2000,
-    "stream": true
-  }
-}
+支持任何 OpenAI 兼容的 API：
+
+```env
+OPENAI_API_KEY=your_key
+OPENAI_BASE_URL=https://api.deepseek.com  # 或其他兼容 API
+OPENAI_MODEL=deepseek-chat                # 或其他模型
 ```
 
-## 支持的语音
+### TTS 配置
 
-### Qwen3 TTS
-- zhifeng_emo (知锋情感语音)
-- zhiyan_emo (知燕情感语音)
-- zhimi_emo (知米情感语音)
-- zhixiao (知晓)
-- zhichu (知楚)
-- zhimiao (知妙)
+#### Qwen3 TTS（推荐用于实时模式）
 
-### 火山引擎 Seed2
-- zh_female_qingxin (清新女声)
-- zh_male_chunhou (醇厚男声)
-- zh_female_wanxin (婉心女声)
-- zh_male_qingrun (清润男声)
-- zh_female_tianmei (甜美女声)
-- zh_male_ziran (自然男声)
-- BV700_V2_streaming (Seed2 流式语音)
+```env
+QWEN3_TTS_API_KEY=your_key
+```
 
-### MiniMax
-- female-tianmei (甜美女声)
-- female-wenrou (温柔女声)
-- male-qingse (青涩男声)
-- male-chenwen (沉稳男声)
-- presenter_male (男性主播)
-- presenter_female (女性主播)
-- audiobook_male_1 (男性有声书1)
-- audiobook_female_1 (女性有声书1)
+支持的音色：
+- `Cherry` - 女声（默认）
+- `Stella` - 女声
+- `Bella` - 女声
+- `Cindy` - 女声
 
-## 系统要求
+#### 火山引擎 Seed2
 
-- Python 3.8+
-- macOS / Linux / Windows
-- 音频播放器 (macOS 自带 afplay, Linux 需要 ffplay/mpg123, Windows 自带)
+```env
+VOLCENGINE_APP_ID=your_app_id
+VOLCENGINE_ACCESS_TOKEN=your_token
+```
 
-## 注意事项
+#### MiniMax
 
-1. **API 密钥安全**: 不要将 `config/api_keys.json` 提交到公开仓库
-2. **API 限流**: 注意各平台的速率限制
-3. **成本控制**: 监控 API 调用成本
-4. **网络连接**: 确保网络连接稳定
+```env
+MINIMAX_API_KEY=your_key
+MINIMAX_GROUP_ID=your_group_id
+```
 
-## 故障排除
+## 技术架构
 
-### 音频无法播放
+### 实时流式处理流程
 
-**macOS**: 自动使用 afplay,无需额外配置
+```
+用户输入
+  ↓
+LLM 流式生成 (逐字输出)
+  ↓
+实时 TTS (逐字接收，流式合成)
+  ↓
+流式音频播放 (边接收边播放)
+  ↓
+用户听到语音
+```
 
-**Linux**: 安装音频播放器
+### 关键技术
+
+1. **流式处理**：使用 Python 生成器实现零延迟传递
+2. **实时 TTS**：Qwen3 支持流式输入和输出
+3. **流式播放**：PyAudio 或 ffplay 实现边接收边播放
+4. **Prompt 优化**：专为语音场景设计，控制输出格式
+
+## 依赖项
+
+主要依赖：
+
+```
+openai>=1.0.0          # LLM 客户端
+requests>=2.31.0       # HTTP 请求
+python-dotenv>=1.0.0   # 环境变量
+pyaudio>=0.2.13        # 音频播放（可选）
+```
+
+## 常见问题
+
+### 1. PyAudio 安装失败
+
+PyAudio 是可选依赖，如果安装失败，系统会自动使用 ffplay：
+
 ```bash
+# macOS
+brew install portaudio
+pip install pyaudio
+
+# Ubuntu/Debian
+sudo apt-get install portaudio19-dev
+pip install pyaudio
+```
+
+### 2. 音频播放失败
+
+确保系统安装了 ffplay：
+
+```bash
+# macOS
+brew install ffmpeg
+
 # Ubuntu/Debian
 sudo apt-get install ffmpeg
-
-# 或
-sudo apt-get install mpg123
 ```
 
-**Windows**: 安装 ffmpeg 并添加到 PATH
+### 3. LLM 输出仍包含 Markdown
 
-### API 调用失败
+Prompt 不是万能的，建议：
+1. 降低 temperature 参数（0.7 左右）
+2. 使用 `text_cleaner.py` 进行后处理
+3. 尝试不同的模型
 
-1. 检查 API 密钥是否正确
-2. 检查网络连接
-3. 查看 API 配额是否用完
-4. 检查 base_url 是否正确
+### 4. 实时模式延迟高
+
+实时模式需要：
+1. 稳定的网络连接
+2. 低延迟的 LLM API
+3. 支持流式的 TTS API（目前仅 Qwen3）
+
+## 开发计划
+
+- [ ] 支持更多 TTS 提供商
+- [ ] 添加语音输入（STT）
+- [ ] 支持多语言
+- [ ] Web UI 界面
+- [ ] 语音克隆功能
 
 ## 许可证
 
@@ -263,4 +345,8 @@ MIT License
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request!
+欢迎提交 Issue 和 Pull Request！
+
+## 联系方式
+
+如有问题，请提交 Issue。

@@ -16,6 +16,7 @@ from src.tts.qwen3_tts import Qwen3TTS
 from src.tts.volcengine_tts import VolcengineSeed2TTS
 from src.tts.minimax_tts import MiniMaxTTS
 from src.tts.qwen3_realtime_tts import Qwen3RealtimeTTS
+from src.tts.volcengine_realtime_tts import VolcengineRealtimeTTS
 from src.audio.player import AudioPlayer
 from src.audio.streaming_player import StreamingAudioPlayer
 from src.audio.pyaudio_player import PyAudioStreamPlayer
@@ -23,15 +24,17 @@ from src.config_loader import ConfigLoader
 from src.streaming_pipeline import StreamingPipeline, BufferedSentenceSplitter
 from src.realtime_pipeline import RealtimeStreamingPipeline
 from src.voice_assistant_prompt import VoiceAssistantPrompt
+from src.role_loader import RoleLoader
 
 
 class LLMTTSTest:
-    def __init__(self, config_path: str = "config/api_keys.json"):
+    def __init__(self, config_path: str = "config/api_keys.json", role_config: dict = None):
         """
         初始化测试类
 
         Args:
             config_path: 配置文件路径
+            role_config: 角色配置（从 role_loader 加载）
         """
         # 使用新的配置加载器
         config_loader = ConfigLoader()
@@ -46,8 +49,8 @@ class LLMTTSTest:
         self.audio_player = AudioPlayer()
         self.output_dir = self.test_config.get("output_dir", "data/audios")
 
-        # 初始化语音助手 Prompt 管理器
-        self.voice_prompt = VoiceAssistantPrompt()
+        # 初始化语音助手 Prompt 管理器（传入角色配置）
+        self.voice_prompt = VoiceAssistantPrompt(role_config=role_config)
 
         # 确保输出目录存在
         os.makedirs(self.output_dir, exist_ok=True)
@@ -90,6 +93,7 @@ class LLMTTSTest:
             self.tts_clients[provider] = VolcengineSeed2TTS(
                 app_id=config.get("app_id"),
                 access_token=config.get("access_token"),
+                api_key=config.get("api_key"),
                 voice=self.test_config["default_voice"]["volcengine"]
             )
         elif provider == "minimax":
@@ -307,6 +311,73 @@ class LLMTTSTest:
             "metrics": result["metrics"]
         }
 
+    def chat_and_speak_realtime_volcengine(self, prompt: str, play_audio: bool = True):
+        """
+        火山引擎实时对话
+        LLM 流式输出 → 实时 TTS (逐字输入) → 流式播放 (边接收边播放)
+
+        Args:
+            prompt: 用户输入
+            play_audio: 是否播放音频
+        """
+        print(f"\n{'='*60}")
+        print(f"用户: {prompt}")
+        print(f"{'='*60}")
+
+        # 初始化 LLM
+        if not self.llm_client:
+            self.initialize_llm()
+
+        # 使用语音助手 Prompt 构建消息
+        messages = self.voice_prompt.get_messages(prompt)
+
+        # 创建实时 TTS 客户端
+        config = self.config.get("volcengine_seed2", {})
+        realtime_tts = VolcengineRealtimeTTS(
+            app_id=config.get("app_id"),
+            access_token=config.get("access_token") or config.get("api_key"),
+            voice="zh_female_cancan_mars_bigtts"
+        )
+
+        # 创建流式播放器 - 火山引擎输出 MP3，使用 ffplay
+        streaming_player = StreamingAudioPlayer(
+            sample_rate=24000,
+            format="mp3"
+        )
+        print('[系统] 使用 ffplay 播放器 (MP3 格式)')
+
+        # 创建实时管道
+        pipeline = RealtimeStreamingPipeline()
+
+        # 获取 LLM 流式输出（使用完整的消息列表）
+        llm_stream = self.llm_client.chat_stream(
+            messages=messages,
+            temperature=self.test_config["llm_config"]["temperature"]
+        )
+
+        # 运行实时管道
+        result = pipeline.run(
+            llm_stream=llm_stream,
+            realtime_tts_client=realtime_tts,
+            streaming_player=streaming_player,
+            display_text=True
+        )
+
+        # 注意：disconnect() 已在 pipeline.run() 中调用
+
+        # 保存对话历史
+        self.voice_prompt.add_conversation('user', prompt)
+        self.voice_prompt.add_conversation('assistant', result["text"])
+
+        print("\n✓ 实时流式处理完成")
+
+        return {
+            "prompt": prompt,
+            "response": result["text"],
+            "mode": "realtime_volcengine",
+            "metrics": result["metrics"]
+        }
+
     def compare_tts_providers(self, prompt: str, play_audio: bool = True):
         """
         对比不同TTS提供商的效果
@@ -400,6 +471,7 @@ class LLMTTSTest:
         print("\n命令:")
         print("  /quit - 退出")
         print("  /mode - 切换模式 (realtime/streaming/normal)")
+        print("  /provider - 切换 TTS 提供商 (qwen3/volcengine)")
         print("  /role <角色> - 切换角色 (default/casual/professional/companion)")
         print("  /clear - 清空对话历史")
         print("  /history - 查看对话历史")
@@ -417,7 +489,13 @@ class LLMTTSTest:
             "normal": "普通模式 (等待完整回复)"
         }
 
-        print(f"当前模式: {mode_desc[current_mode]}\n")
+        provider_desc = {
+            "qwen3": "通义千问 TTS",
+            "volcengine": "火山引擎 Seed2 TTS"
+        }
+
+        print(f"当前模式: {mode_desc[current_mode]}")
+        print(f"当前 TTS: {provider_desc[current_provider]}\n")
 
         while True:
             try:
@@ -436,6 +514,16 @@ class LLMTTSTest:
                     current_idx = modes.index(current_mode)
                     current_mode = modes[(current_idx + 1) % len(modes)]
                     print(f"✓ 已切换到: {mode_desc[current_mode]}")
+
+                elif user_input == "/provider":
+                    # 循环切换 TTS 提供商
+                    providers = ["qwen3", "volcengine"]
+                    current_idx = providers.index(current_provider)
+                    current_provider = providers[(current_idx + 1) % len(providers)]
+                    print(f"✓ 已切换到: {provider_desc[current_provider]}")
+                    # 如果是火山引擎且在实时模式，提示用户
+                    if current_provider == "volcengine" and current_mode == "realtime":
+                        print(f"  💡 提示: 火山引擎实时模式使用音色 zh_female_cancan_mars_bigtts")
 
                 elif user_input == "/clear":
                     self.voice_prompt.clear_history()
@@ -484,16 +572,21 @@ class LLMTTSTest:
                     role_info = self.voice_prompt.get_role_info()
                     print("\n当前配置:")
                     print(f"  模式: {mode_desc[current_mode]}")
+                    print(f"  TTS 提供商: {provider_desc[current_provider]}")
                     print(f"  角色: {role_info['name']} ({role_info['personality']})")
-                    print(f"  TTS: {current_provider}")
                     print(f"  对话轮数: {len(self.voice_prompt.conversation_history) // 2}")
                     print(f"  知识库条目: {len(self.voice_prompt.knowledge_base)}")
                     print()
 
                 else:
                     # 根据模式选择处理方式
-                    if current_mode == "realtime" and current_provider == "qwen3":
-                        self.chat_and_speak_realtime(user_input)
+                    if current_mode == "realtime":
+                        if current_provider == "qwen3":
+                            self.chat_and_speak_realtime(user_input)
+                        elif current_provider == "volcengine":
+                            self.chat_and_speak_realtime_volcengine(user_input)
+                        else:
+                            print(f"❌ {current_provider} 不支持实时模式，请切换到 qwen3 或 volcengine")
                     elif current_mode == "streaming":
                         self.chat_and_speak_streaming(user_input, tts_provider=current_provider)
                     else:
@@ -510,7 +603,23 @@ class LLMTTSTest:
 
 def main():
     """主函数"""
-    test = LLMTTSTest()
+    # 加载角色
+    print("\n正在加载角色...")
+    role_loader = RoleLoader()
+
+    # 让用户选择角色
+    selected_role_id = role_loader.select_role_interactive()
+
+    # 获取角色配置
+    role_config = None
+    if selected_role_id:
+        role_config = role_loader.get_role(selected_role_id)
+        print(f"\n✓ 使用角色: {role_config['name']}")
+        print(f"  特点: {role_config['personality']}")
+        print(f"  风格: {role_config['style']}\n")
+
+    # 初始化测试类（传入角色配置）
+    test = LLMTTSTest(role_config=role_config)
 
     # 检查命令行参数
     if len(sys.argv) > 1:

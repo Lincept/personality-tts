@@ -9,14 +9,16 @@ from datetime import datetime
 class VoiceAssistantPrompt:
     """语音助手 Prompt 管理器"""
 
-    def __init__(self, role: str = "default"):
+    def __init__(self, role: str = "default", role_config: Optional[Dict] = None):
         """
         初始化 Prompt 管理器
 
         Args:
             role: 角色类型 (default/casual/professional/companion)
+            role_config: 自定义角色配置（从 role_loader 加载）
         """
         self.role = role
+        self.custom_role_config = role_config  # 保存自定义角色配置
         self.system_prompt = self._build_system_prompt()
         self.user_info = {}
         self.knowledge_base = []
@@ -25,11 +27,60 @@ class VoiceAssistantPrompt:
 
     def _build_system_prompt(self) -> str:
         """构建系统提示词"""
-        # 获取角色配置
-        role_config = VoiceAssistantConfig.ROLES.get(self.role, VoiceAssistantConfig.ROLES["default"])
+        # 优先使用自定义角色配置
+        if self.custom_role_config:
+            role_config = {
+                'name': self.custom_role_config['name'],
+                'personality': self.custom_role_config['personality'],
+                'style': self.custom_role_config['style']
+            }
+            custom_prompt = self.custom_role_config.get('custom_prompt')
+        else:
+            # 使用内置角色配置
+            role_config = VoiceAssistantConfig.ROLES.get(self.role, VoiceAssistantConfig.ROLES["default"])
+            custom_prompt = None
 
-        # 使用普通字符串而不是 f-string，保留占位符
-        base_prompt = """你是一个{personality}的语音助手。你的回答会通过语音合成（TTS）播放给用户，所以必须适合语音表达。
+        # 如果有自定义 prompt，使用自定义的
+        if custom_prompt:
+            base_prompt = custom_prompt + """
+
+【核心规则 - 必须严格遵守】
+
+1. 输出格式要求
+   - 简洁回答：每次回答控制在 2-3 句话以内（最多 50 字）
+   - 口语化表达：使用自然的口语，就像和朋友聊天一样
+   - 绝对禁止使用：
+     * Markdown 格式（粗体、标题、代码块等）
+     * 特殊符号（*、#、-、_、```、【】、「」等）
+     * 列表格式（带序号或符号的列表）
+     * 表情符号（除非用户明确要求）
+     * 长篇大论或分点列举
+
+2. 对话风格
+   - 像朋友一样自然交流
+   - 语气亲切、温暖
+   - 回答简短有力
+   - 避免过于正式或机械
+
+3. 回答策略
+   - 优先给出核心答案
+   - 如果话题复杂，先给简要回答，然后询问是否需要详细说明
+   - 不要一次性输出大量信息
+   - 保持对话的互动性
+
+【当前时间】
+{{current_time}}
+
+【用户信息】
+{{user_info}}
+
+【知识库】
+{{knowledge_base}}
+
+记住：你是在和用户语音对话，保持自然、简洁、友好！每次回答不超过 50 字！"""
+        else:
+            # 使用普通字符串而不是 f-string，保留占位符
+            base_prompt = """你是一个{personality}的语音助手。你的回答会通过语音合成（TTS）播放给用户，所以必须适合语音表达。
 
 【角色定位】
 - 名称：{name}
@@ -97,12 +148,12 @@ class VoiceAssistantPrompt:
 
 记住：你是在和用户语音对话，保持自然、简洁、友好！每次回答不超过 50 字！"""
 
-        # 先格式化角色信息
-        base_prompt = base_prompt.format(
-            name=role_config['name'],
-            style=role_config['style'],
-            personality=role_config['personality']
-        )
+            # 先格式化角色信息
+            base_prompt = base_prompt.format(
+                name=role_config['name'],
+                style=role_config['style'],
+                personality=role_config['personality']
+            )
 
         return base_prompt
 
@@ -267,7 +318,12 @@ class VoiceAssistantConfig:
     # 角色预设
     ROLES = {
         'default': {
-            'name': '默认助手',
+            'name': '幽默助手',
+            'personality': '风趣、搞笑、机智',
+            'style': '幽默对话'
+        },
+        'friendly': {
+            'name': '友好助手',
             'personality': '友好、专业、简洁',
             'style': '自然对话'
         },

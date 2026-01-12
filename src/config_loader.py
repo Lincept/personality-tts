@@ -51,7 +51,8 @@ class ConfigLoader:
             },
             "volcengine_seed2": {
                 "app_id": os.getenv("VOLCENGINE_APP_ID", ""),
-                "access_token": os.getenv("VOLCENGINE_ACCESS_TOKEN", ""),
+                "api_key": os.getenv("VOLCENGINE_API_KEY", ""),
+                "access_token": os.getenv("VOLCENGINE_ACCESS_TOKEN", ""),  # 兼容旧配置
                 "base_url": "https://openspeech.bytedance.com/api/v1"
             },
             "minimax": {
@@ -86,9 +87,11 @@ class ConfigLoader:
 
         # 检查火山引擎
         volcengine = self.config.get("volcengine_seed2", {})
-        validation["volcengine"] = bool(volcengine.get("app_id") and
-                                       volcengine.get("access_token") and
-                                       not volcengine.get("app_id").startswith("YOUR_"))
+        validation["volcengine"] = bool(
+            volcengine.get("app_id") and
+            (volcengine.get("api_key") or volcengine.get("access_token")) and
+            not volcengine.get("app_id").startswith("YOUR_")
+        )
 
         # 检查 MiniMax
         minimax = self.config.get("minimax", {})

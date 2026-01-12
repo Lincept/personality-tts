@@ -14,7 +14,7 @@ class StreamingAudioPlayer:
     """流式音频播放器"""
 
     def __init__(self, sample_rate: int = 24000, channels: int = 1,
-                 sample_width: int = 2):
+                 sample_width: int = 2, format: str = "pcm"):
         """
         初始化流式播放器
 
@@ -22,10 +22,12 @@ class StreamingAudioPlayer:
             sample_rate: 采样率
             channels: 声道数 (1=单声道, 2=立体声)
             sample_width: 采样宽度 (字节数，2=16bit)
+            format: 音频格式 ("pcm" 或 "mp3")
         """
         self.sample_rate = sample_rate
         self.channels = channels
         self.sample_width = sample_width
+        self.format = format
         self.system = platform.system()
         self.process = None
         self.is_playing = False
@@ -67,16 +69,25 @@ class StreamingAudioPlayer:
 
     def _play_stream_macos(self, audio_queue: queue.Queue):
         """macOS 流式播放"""
-        # 使用 ffplay 播放 PCM 流
-        cmd = [
-            'ffplay',
-            '-f', 's16le',  # PCM 16-bit little-endian
-            '-ar', str(self.sample_rate),  # 采样率
-            '-ac', str(self.channels),  # 声道数
-            '-nodisp',  # 不显示窗口
-            '-autoexit',  # 播放完自动退出
-            '-i', '-'  # 从 stdin 读取
-        ]
+        # 根据格式选择 ffplay 参数
+        if self.format == "mp3":
+            cmd = [
+                'ffplay',
+                '-f', 'mp3',  # MP3 格式
+                '-nodisp',  # 不显示窗口
+                '-autoexit',  # 播放完自动退出
+                '-i', '-'  # 从 stdin 读取
+            ]
+        else:  # PCM
+            cmd = [
+                'ffplay',
+                '-f', 's16le',  # PCM 16-bit little-endian
+                '-ar', str(self.sample_rate),  # 采样率
+                '-ac', str(self.channels),  # 声道数
+                '-nodisp',  # 不显示窗口
+                '-autoexit',  # 播放完自动退出
+                '-i', '-'  # 从 stdin 读取
+            ]
 
         try:
             self.process = subprocess.Popen(
@@ -87,7 +98,7 @@ class StreamingAudioPlayer:
             )
 
             self.is_playing = True
-            print('[播放器] 开始流式播放 (ffplay)')
+            print(f'[播放器] 开始流式播放 (ffplay, {self.format})')
 
             total_bytes = 0
             chunk_count = 0

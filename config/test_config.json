@@ -1,7 +1,7 @@
 {
   "tts_providers": ["qwen3", "volcengine", "minimax"],
   "default_voice": {
-    "qwen3": "Cherry",
+    "qwen3": "Chelsie",
     "volcengine": "zh_female_qingxin",
     "minimax": "female-tianmei"
   },

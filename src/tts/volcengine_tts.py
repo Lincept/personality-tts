@@ -8,18 +8,20 @@ from typing import Optional
 
 
 class VolcengineSeed2TTS:
-    def __init__(self, app_id: str, access_token: str,
+    def __init__(self, app_id: str, access_token: str = None, api_key: str = None,
                  voice: str = "zh_female_qingxin"):
         """
         初始化火山引擎 Seed2 TTS 客户端
 
         Args:
             app_id: 火山引擎应用ID
-            access_token: 访问令牌
+            access_token: 访问令牌（旧版，兼容）
+            api_key: API Key（新版，推荐）
             voice: 语音模型名称
         """
         self.app_id = app_id
-        self.access_token = access_token
+        # 优先使用 api_key，如果没有则使用 access_token
+        self.token = api_key if api_key else access_token
         self.voice = voice
         self.base_url = "https://openspeech.bytedance.com/api/v1/tts"
 
@@ -39,14 +41,14 @@ class VolcengineSeed2TTS:
         """
         try:
             headers = {
-                "Authorization": f"Bearer; {self.access_token}",
+                "Authorization": f"Bearer; {self.token}",
                 "Content-Type": "application/json"
             }
 
             payload = {
                 "app": {
                     "appid": self.app_id,
-                    "token": self.access_token,
+                    "token": self.token,
                     "cluster": "volcano_tts"
                 },
                 "user": {
@@ -132,14 +134,14 @@ class VolcengineSeed2TTS:
         """
         try:
             headers = {
-                "Authorization": f"Bearer; {self.access_token}",
+                "Authorization": f"Bearer; {self.token}",
                 "Content-Type": "application/json"
             }
 
             payload = {
                 "app": {
                     "appid": self.app_id,
-                    "token": self.access_token,
+                    "token": self.token,
                     "cluster": "volcano_tts"
                 },
                 "user": {
