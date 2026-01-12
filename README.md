@@ -2,6 +2,8 @@
 
 一个集成了大语言模型（LLM）和文本转语音（TTS）的实时语音助手系统。
 
+> **📖 详细中文文档请查看：[使用说明.md](./使用说明.md)**
+
 ## 功能特性
 
 - ✅ **多 LLM 支持**：支持 OpenAI 兼容的 API（如 DeepSeek、Qwen 等）
@@ -331,22 +333,12 @@ Prompt 不是万能的，建议：
 2. 低延迟的 LLM API
 3. 支持流式的 TTS API（目前仅 Qwen3）
 
-## 开发计划
+## 文档
 
-- [ ] 支持更多 TTS 提供商
-- [ ] 添加语音输入（STT）
-- [ ] 支持多语言
-- [ ] Web UI 界面
-- [ ] 语音克隆功能
+- [使用说明.md](./使用说明.md) - 完整的中文使用文档
+- [VOICE_ASSISTANT_PROMPT.md](./VOICE_ASSISTANT_PROMPT.md) - Prompt 系统详细文档
+- [roles/README.md](./roles/README.md) - 角色系统说明
 
 ## 许可证
 
 MIT License
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 联系方式
-
-如有问题，请提交 Issue。
