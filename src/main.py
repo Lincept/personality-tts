@@ -185,6 +185,14 @@ class LLMTTSTest:
         else:
             print(f"❌ 语音生成失败: {result.get('error')}")
 
+        # 保存到 Mem0（长期记忆）
+        if self.mem0_manager:
+            self.mem0_manager.add_conversation(
+                user_input=prompt,
+                assistant_response=full_response,
+                user_id=self.user_id
+            )
+
         return {
             "prompt": prompt,
             "response": full_response,
@@ -248,6 +256,15 @@ class LLMTTSTest:
                 full_response.append(chunk)
 
         print("\n\n✓ 流式处理完成")
+
+        # 保存到 Mem0（长期记忆）
+        full_response_text = "".join(full_response)
+        if self.mem0_manager:
+            self.mem0_manager.add_conversation(
+                user_input=prompt,
+                assistant_response=full_response_text,
+                user_id=self.user_id
+            )
 
         return {
             "prompt": prompt,
