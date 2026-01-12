@@ -29,27 +29,31 @@ class Mem0Manager:
             from mem0 import Memory
 
             # 构建 Mem0 配置
-            # 使用本地 HuggingFace embedding 模型，避免 API 兼容性问题
+            # 完全使用通义千问 API（LLM + Embedding）
             mem0_config = {
                 "llm": {
                     "provider": "openai",
                     "config": {
-                        "model": config.get("llm_model", "gpt-4o-mini"),
+                        "model": config.get("llm_model", "qwen-turbo"),
                         "api_key": config.get("llm_api_key"),
                         "openai_base_url": config.get("llm_base_url")
                     }
                 },
                 "embedder": {
-                    "provider": "huggingface",
+                    "provider": "openai",
                     "config": {
-                        "model": "sentence-transformers/all-MiniLM-L6-v2"  # 轻量级本地 embedding 模型
+                        "model": "text-embedding-v3",  # 通义千问 embedding 模型
+                        "api_key": config.get("llm_api_key"),
+                        "openai_base_url": config.get("llm_base_url"),
+                        "embedding_dims": 1024  # 通义千问支持的维度
                     }
                 },
                 "vector_store": {
                     "provider": "qdrant",
                     "config": {
                         "collection_name": "personality_tts_memory",
-                        "path": "./data/qdrant"
+                        "path": "./data/qdrant",
+                        "embedding_model_dims": 1024  # 确保向量数据库使用正确的维度
                     }
                 }
             }

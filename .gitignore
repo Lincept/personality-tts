@@ -20,3 +20,5 @@ data/audios/*.wav
 .idea/
 .vscode/
 *.log
+data/qdrant/meta.json
+data/qdrant/collection/personality_tts_memory/storage.sqlite
