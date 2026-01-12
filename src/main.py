@@ -25,6 +25,7 @@ from src.streaming_pipeline import StreamingPipeline, BufferedSentenceSplitter
 from src.realtime_pipeline import RealtimeStreamingPipeline
 from src.voice_assistant_prompt import VoiceAssistantPrompt
 from src.role_loader import RoleLoader
+from src.memory.mem0_manager import Mem0Manager
 
 
 class LLMTTSTest:
@@ -49,8 +50,17 @@ class LLMTTSTest:
         self.audio_player = AudioPlayer()
         self.output_dir = self.test_config.get("output_dir", "data/audios")
 
-        # 初始化语音助手 Prompt 管理器（传入角色配置）
-        self.voice_prompt = VoiceAssistantPrompt(role_config=role_config)
+        # 初始化 Mem0 记忆管理器
+        mem0_config = self.config.get("mem0", {})
+        self.mem0_manager = None
+        if mem0_config.get("enable_mem0", False):
+            self.mem0_manager = Mem0Manager(mem0_config)
+
+        # 用户ID（从配置获取）
+        self.user_id = mem0_config.get("user_id", "default_user")
+
+        # 初始化语音助手 Prompt 管理器（传入角色配置和 Mem0 管理器）
+        self.voice_prompt = VoiceAssistantPrompt(role_config=role_config, mem0_manager=self.mem0_manager)
 
         # 确保输出目录存在
         os.makedirs(self.output_dir, exist_ok=True)
@@ -263,8 +273,8 @@ class LLMTTSTest:
         if not self.llm_client:
             self.initialize_llm()
 
-        # 使用语音助手 Prompt 构建消息
-        messages = self.voice_prompt.get_messages(prompt)
+        # 使用语音助手 Prompt 构建消息（传入 user_id）
+        messages = self.voice_prompt.get_messages(prompt, user_id=self.user_id)
 
         # 创建实时 TTS 客户端
         config = self.config.get("qwen3_tts", {})
@@ -298,9 +308,17 @@ class LLMTTSTest:
             display_text=True
         )
 
-        # 保存对话历史
+        # 保存对话历史（短期）
         self.voice_prompt.add_conversation('user', prompt)
         self.voice_prompt.add_conversation('assistant', result["text"])
+
+        # 保存到 Mem0（长期记忆）
+        if self.mem0_manager:
+            self.mem0_manager.add_conversation(
+                user_input=prompt,
+                assistant_response=result["text"],
+                user_id=self.user_id
+            )
 
         print("\n✓ 实时流式处理完成")
 
@@ -328,8 +346,8 @@ class LLMTTSTest:
         if not self.llm_client:
             self.initialize_llm()
 
-        # 使用语音助手 Prompt 构建消息
-        messages = self.voice_prompt.get_messages(prompt)
+        # 使用语音助手 Prompt 构建消息（传入 user_id）
+        messages = self.voice_prompt.get_messages(prompt, user_id=self.user_id)
 
         # 创建实时 TTS 客户端
         config = self.config.get("volcengine_seed2", {})
@@ -365,9 +383,17 @@ class LLMTTSTest:
 
         # 注意：disconnect() 已在 pipeline.run() 中调用
 
-        # 保存对话历史
+        # 保存对话历史（短期）
         self.voice_prompt.add_conversation('user', prompt)
         self.voice_prompt.add_conversation('assistant', result["text"])
+
+        # 保存到 Mem0（长期记忆）
+        if self.mem0_manager:
+            self.mem0_manager.add_conversation(
+                user_input=prompt,
+                assistant_response=result["text"],
+                user_id=self.user_id
+            )
 
         print("\n✓ 实时流式处理完成")
 
@@ -477,6 +503,9 @@ class LLMTTSTest:
         print("  /history - 查看对话历史")
         print("  /setname <名字> - 设置用户名")
         print("  /addknowledge <内容> - 添加知识库")
+        print("  /memories - 查看长期记忆 (Mem0)")
+        print("  /clearmem - 清除长期记忆 (Mem0)")
+        print("  /user <用户ID> - 切换用户 (Mem0)")
         print("  /info - 查看当前配置")
         print()
 
@@ -568,6 +597,36 @@ class LLMTTSTest:
                     else:
                         print("❌ 请提供知识内容，例如: /addknowledge 用户喜欢攀岩")
 
+                elif user_input == "/memories":
+                    # 查看长期记忆
+                    if self.mem0_manager:
+                        memories = self.mem0_manager.get_all_memories(self.user_id)
+                        if memories:
+                            print(f"\n长期记忆 (用户: {self.user_id}):")
+                            for i, mem in enumerate(memories, 1):
+                                print(f"{i}. {mem['memory']}")
+                            print()
+                        else:
+                            print("暂无长期记忆")
+                    else:
+                        print("Mem0 未启用")
+
+                elif user_input == "/clearmem":
+                    # 清除长期记忆
+                    if self.mem0_manager:
+                        self.mem0_manager.clear_memories(self.user_id)
+                    else:
+                        print("Mem0 未启用")
+
+                elif user_input.startswith("/user"):
+                    # 切换用户
+                    parts = user_input.split(maxsplit=1)
+                    if len(parts) > 1:
+                        self.user_id = parts[1]
+                        print(f"✓ 已切换到用户: {self.user_id}")
+                    else:
+                        print(f"当前用户: {self.user_id}")
+
                 elif user_input == "/info":
                     role_info = self.voice_prompt.get_role_info()
                     print("\n当前配置:")
@@ -576,6 +635,9 @@ class LLMTTSTest:
                     print(f"  角色: {role_info['name']} ({role_info['personality']})")
                     print(f"  对话轮数: {len(self.voice_prompt.conversation_history) // 2}")
                     print(f"  知识库条目: {len(self.voice_prompt.knowledge_base)}")
+                    if self.mem0_manager:
+                        mem_count = len(self.mem0_manager.get_all_memories(self.user_id))
+                        print(f"  长期记忆: {mem_count} 条 (用户: {self.user_id})")
                     print()
 
                 else:

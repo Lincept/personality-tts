@@ -64,6 +64,13 @@ class ConfigLoader:
                 "api_key": os.getenv("OPENAI_API_KEY", ""),
                 "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
                 "model": os.getenv("OPENAI_MODEL", "gpt-4")
+            },
+            "mem0": {
+                "enable_mem0": os.getenv("ENABLE_MEM0", "false").lower() == "true",
+                "llm_api_key": os.getenv("MEM0_LLM_API_KEY", os.getenv("OPENAI_API_KEY", "")),
+                "llm_base_url": os.getenv("MEM0_LLM_BASE_URL", os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")),
+                "llm_model": os.getenv("MEM0_LLM_MODEL", "gpt-4o-mini"),
+                "user_id": os.getenv("MEM0_USER_ID", "default_user")
             }
         }
 
@@ -116,6 +123,11 @@ class ConfigLoader:
         print(f"✓ 火山引擎 Seed2: {'已配置' if validation['volcengine'] else '未配置'}")
         print(f"✓ MiniMax TTS:    {'已配置' if validation['minimax'] else '未配置'}")
         print(f"✓ OpenAI LLM:     {'已配置' if validation['openai'] else '未配置'}")
+
+        # 显示 Mem0 状态
+        mem0_config = self.config.get("mem0", {})
+        mem0_enabled = mem0_config.get("enable_mem0", False)
+        print(f"✓ Mem0 记忆:      {'已启用' if mem0_enabled else '未启用'}")
         print("=" * 50)
 
         if not any(validation.values()):

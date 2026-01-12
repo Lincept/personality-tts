@@ -9,16 +9,18 @@ from datetime import datetime
 class VoiceAssistantPrompt:
     """语音助手 Prompt 管理器"""
 
-    def __init__(self, role: str = "default", role_config: Optional[Dict] = None):
+    def __init__(self, role: str = "default", role_config: Optional[Dict] = None, mem0_manager=None):
         """
         初始化 Prompt 管理器
 
         Args:
             role: 角色类型 (default/casual/professional/companion)
             role_config: 自定义角色配置（从 role_loader 加载）
+            mem0_manager: Mem0 记忆管理器（可选）
         """
         self.role = role
         self.custom_role_config = role_config  # 保存自定义角色配置
+        self.mem0_manager = mem0_manager  # Mem0 记忆管理器
         self.system_prompt = self._build_system_prompt()
         self.user_info = {}
         self.knowledge_base = []
@@ -227,16 +229,26 @@ class VoiceAssistantPrompt:
         """清空对话历史"""
         self.conversation_history = []
 
-    def get_messages(self, user_input: str) -> List[Dict[str, str]]:
+    def get_messages(self, user_input: str, user_id: str = "default") -> List[Dict[str, str]]:
         """
-        构建完整的消息列表
+        构建完整的消息列表（增强版，包含 Mem0 记忆）
 
         Args:
             user_input: 用户输入
+            user_id: 用户ID（用于 Mem0 记忆检索）
 
         Returns:
             消息列表
         """
+        # 1. 检索 Mem0 长期记忆
+        mem0_context = ""
+        if self.mem0_manager:
+            mem0_context = self.mem0_manager.search_memories(
+                query=user_input,
+                user_id=user_id,
+                limit=5
+            )
+
         # 格式化用户信息
         user_info_str = self._format_user_info()
 
@@ -247,6 +259,10 @@ class VoiceAssistantPrompt:
         system_prompt = self.system_prompt.replace("{{current_time}}", datetime.now().strftime("%Y年%m月%d日 %H:%M"))
         system_prompt = system_prompt.replace("{{user_info}}", user_info_str)
         system_prompt = system_prompt.replace("{{knowledge_base}}", knowledge_str)
+
+        # 2. 在系统提示中添加 Mem0 长期记忆
+        if mem0_context:
+            system_prompt += f"\n\n【长期记忆】（来自历史对话）\n{mem0_context}"
 
         # 构建消息列表
         messages = [

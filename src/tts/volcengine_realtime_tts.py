@@ -12,7 +12,7 @@ import time
 import sys
 import os
 
-sys.path.append("/Users/shangguangtao/Downloads/volcengine_bidirection_demo")
+sys.path.append("src/tts/protocols")
 
 from protocols import (
     EventType,
