@@ -113,7 +113,7 @@ class VolcengineRealtimeTTS:
         )
 
         self.is_connected = True
-        print('[火山引擎实时TTS] WebSocket 连接已建立')
+        # print('[火山引擎实时TTS] WebSocket 连接已建立')  # 静默
 
     async def _start_session_async(self):
         """异步启动会话"""
@@ -125,7 +125,7 @@ class VolcengineRealtimeTTS:
             "req_params": {
                 "speaker": self.voice,
                 "audio_params": {
-                    "format": "mp3",
+                    "format": "pcm",  # 使用 PCM 格式避免电流声（MP3 格式会导致播放器解析错误）
                     "sample_rate": 24000,
                     "enable_timestamp": True,
                 },
@@ -149,7 +149,7 @@ class VolcengineRealtimeTTS:
         )
 
         self.is_session_active = True
-        print(f'[火山引擎实时TTS] 会话已启动: {self.session_id}')
+        # print(f'[火山引擎实时TTS] 会话已启动: {self.session_id}')  # 静默
 
     async def _send_text_async(self, text: str):
         """异步发送文本"""
@@ -164,7 +164,7 @@ class VolcengineRealtimeTTS:
             "req_params": {
                 "speaker": self.voice,
                 "audio_params": {
-                    "format": "mp3",
+                    "format": "pcm",  # 使用 PCM 格式避免电流声（MP3 格式会导致播放器解析错误）
                     "sample_rate": 24000,
                     "enable_timestamp": True,
                 },
@@ -210,10 +210,10 @@ class VolcengineRealtimeTTS:
                             self.first_audio_received = True
                             if self.start_time:
                                 self.first_audio_delay = time.time() - self.start_time
-                                print(f'[火山引擎实时TTS] 首个音频块延迟: {self.first_audio_delay:.3f}秒')
+                                # print(f'[火山引擎实时TTS] 首个音频块延迟: {self.first_audio_delay:.3f}秒')  # 静默
                 elif msg.type == MsgType.Error:
                     error_msg = msg.payload.decode('utf-8') if isinstance(msg.payload, bytes) else str(msg.payload)
-                    print(f'[火山引擎实时TTS] 错误: {error_msg}')
+                    # print(f'❌ TTS 错误: {error_msg}')  # 静默
                     self.audio_queue.put(None)
                     break
             except asyncio.TimeoutError:
@@ -223,7 +223,8 @@ class VolcengineRealtimeTTS:
                     break
                 continue
             except Exception as e:
-                print(f'[火山引擎实时TTS] 接收错误: {e}')
+                # 断开连接时的错误是正常的，静默处理
+                # print(f'❌ TTS 接收错误: {e}')  # 静默
                 self.audio_queue.put(None)
                 break
 
@@ -233,34 +234,34 @@ class VolcengineRealtimeTTS:
             await finish_session(self.websocket, self.session_id)
             # 注意：不要在这里设置 is_session_active = False
             # 让接收循环在收到 SessionFinished 事件时再设置
-            print('[火山引擎实时TTS] 会话结束信号已发送')
+            # print('[火山引擎实时TTS] 会话结束信号已发送')  # 静默
 
     async def _disconnect_async(self):
         """异步断开连接"""
         if self.is_connected and self.websocket:
             try:
-                await finish_connection(self.websocket)
-                # 等待连接关闭确认，但忽略其他消息
-                try:
-                    await wait_for_event(
-                        self.websocket, MsgType.FullServerResponse, EventType.ConnectionFinished
-                    )
-                except ValueError:
-                    # 可能收到其他消息，忽略
-                    pass
-                await self.websocket.close()
-                self.is_connected = False
-                print('[火山引擎实时TTS] 连接已关闭')
-            except Exception as e:
-                print(f'[火山引擎实时TTS] 断开连接时出错: {e}')
+                # 先标记为未连接，停止接收循环
                 self.is_connected = False
 
-    def start_session(self, audio_format: str = "mp3", sample_rate: int = 24000) -> queue.Queue:
+                # 发送断开请求（但不等待响应，避免与接收循环冲突）
+                try:
+                    await finish_connection(self.websocket)
+                except Exception:
+                    pass  # 忽略发送错误
+
+                # 直接关闭 WebSocket
+                await self.websocket.close()
+                # print('[火山引擎实时TTS] 连接已关闭')  # 静默
+            except Exception as e:
+                # print(f'❌ TTS 断开连接时出错: {e}')  # 静默
+                self.is_connected = False
+
+    def start_session(self, audio_format: str = "pcm", sample_rate: int = 24000) -> queue.Queue:
         """
         启动实时 TTS 会话
 
         Args:
-            audio_format: 音频格式 (mp3)
+            audio_format: 音频格式 (pcm)
             sample_rate: 采样率
 
         Returns:
@@ -268,15 +269,25 @@ class VolcengineRealtimeTTS:
         """
         self._start_event_loop()
 
-        # 创建音频队列
+        # 如果有旧的接收任务，先取消
+        if hasattr(self, 'receive_task') and self.receive_task:
+            try:
+                self.receive_task.cancel()
+            except:
+                pass
+
+        # 创建新的音频队列（每次对话创建新队列）
         self.audio_queue = queue.Queue()
 
-        # 连接并启动会话
-        self._run_coroutine(self._connect_async())
+        # 只在未连接时才建立 WebSocket 连接（复用连接）
+        if not self.is_connected:
+            self._run_coroutine(self._connect_async())
+
+        # 启动新会话
         self._run_coroutine(self._start_session_async())
 
-        # 启动接收线程
-        receive_task = asyncio.run_coroutine_threadsafe(
+        # 启动接收线程（保存引用以便清理）
+        self.receive_task = asyncio.run_coroutine_threadsafe(
             self._receive_audio_async(), self.loop
         )
 
@@ -297,18 +308,40 @@ class VolcengineRealtimeTTS:
         self._run_coroutine(self._send_text_async(text))
 
     def finish(self):
-        """结束会话"""
+        """结束会话（但保持连接以便复用）"""
         if self.is_session_active:
             self._run_coroutine(self._finish_session_async())
+
+    def clear_queue(self):
+        """清空音频队列（用于打断）"""
+        if self.audio_queue:
+            # 清空队列中的所有数据
+            while not self.audio_queue.empty():
+                try:
+                    self.audio_queue.get_nowait()
+                except:
+                    break
+            # 放入结束信号
+            self.audio_queue.put(None)
 
     def disconnect(self):
         """断开连接"""
         if self.is_connected:
             self._run_coroutine(self._disconnect_async())
 
+            # 等待接收任务完成（带超时）
+            if hasattr(self, 'receive_task'):
+                try:
+                    self.receive_task.result(timeout=2.0)
+                except Exception:
+                    pass  # 忽略接收任务的错误
+
         # 停止事件循环
         if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.loop.stop)
+            # 等待事件循环停止
+            import time
+            time.sleep(0.1)
 
     def get_metrics(self) -> dict:
         """获取性能指标"""

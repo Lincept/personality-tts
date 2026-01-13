@@ -25,12 +25,12 @@ class RealtimeASRCallback(RecognitionCallback):
 
     def on_open(self):
         """连接建立"""
-        print('[ASR] 连接已建立')
+        # print('[ASR] 连接已建立')  # 静默
         self.first_result_time = time.time()
 
     def on_close(self):
         """连接关闭"""
-        print('[ASR] 连接已关闭')
+        # print('[ASR] 连接已关闭')  # 静默
 
     def on_event(self, result: RecognitionResult):
         """处理识别结果"""
@@ -45,31 +45,31 @@ class RealtimeASRCallback(RecognitionCallback):
 
                     if is_final:
                         # 完整句子
-                        print(f'\n[ASR] 句子: {text}')
+                        # print(f'\n[ASR] 句子: {text}')  # 静默
                         if self.on_sentence_callback:
                             self.on_sentence_callback(text)
                     else:
                         # 中间结果
-                        print(f'\r[ASR] 中间: {text}', end='', flush=True)
+                        # print(f'\r[ASR] 中间: {text}', end='', flush=True)  # 静默
                         if self.on_text_callback:
                             self.on_text_callback(text)
 
                     # 记录首个结果延迟
                     if self.first_result_time:
                         delay = time.time() - self.first_result_time
-                        print(f'\n[ASR] 首个结果延迟: {delay:.3f}秒')
+                        # print(f'\n[ASR] 首个结果延迟: {delay:.3f}秒')  # 静默
                         self.first_result_time = None
 
         except Exception as e:
-            print(f'\n[ASR] 结果处理错误: {e}')
+            print(f'❌ ASR 结果处理错误: {e}')  # 保留错误信息
 
     def on_error(self, result: RecognitionResult):
         """处理错误"""
-        print(f'\n[ASR] 错误: {result}')
+        print(f'❌ ASR 错误: {result}')  # 保留错误信息
 
     def on_complete(self):
         """识别完成"""
-        print('\n[ASR] 识别完成')
+        # print('\n[ASR] 识别完成')  # 静默
 
 
 class DashScopeASR:
@@ -132,9 +132,9 @@ class DashScopeASR:
         # 启动识别
         self.recognition.start()
         self.is_running = True
-        print(f'[ASR] 已启动: model={self.model}, sample_rate={sample_rate}Hz')
-        if disfluency_removal_enabled:
-            print('[ASR] 已启用语气词过滤')
+        # print(f'[ASR] 已启动: model={self.model}, sample_rate={sample_rate}Hz')  # 静默
+        # if disfluency_removal_enabled:
+        #     print('[ASR] 已启用语气词过滤')  # 静默
 
     def send_audio(self, audio_data: bytes):
         """
@@ -149,7 +149,7 @@ class DashScopeASR:
         try:
             self.recognition.send_audio_frame(audio_data)
         except Exception as e:
-            print(f'\n[ASR] 发送音频失败: {e}')
+            print(f'❌ ASR 发送音频失败: {e}')  # 保留错误信息
 
     def stop(self):
         """停止识别"""
@@ -159,6 +159,6 @@ class DashScopeASR:
         try:
             self.recognition.stop()
             self.is_running = False
-            print('\n[ASR] 已停止')
+            # print('\n[ASR] 已停止')  # 静默
         except Exception as e:
-            print(f'\n[ASR] 停止失败: {e}')
+            print(f'❌ ASR 停止失败: {e}')  # 保留错误信息

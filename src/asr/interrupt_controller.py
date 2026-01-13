@@ -7,6 +7,7 @@ import time
 from typing import Callable, Optional
 
 
+
 class InterruptController:
     """打断控制器"""
 
@@ -40,12 +41,10 @@ class InterruptController:
         self.interrupt_callback = interrupt_callback
         self.is_monitoring = True
         self.interrupt_triggered = False
-        print('[打断控制] 开始监听打断')
 
     def stop_monitoring(self):
         """停止监听打断"""
         self.is_monitoring = False
-        print('[打断控制] 停止监听打断')
 
     def set_tts_speaking(self, is_speaking: bool):
         """
@@ -102,7 +101,6 @@ class InterruptController:
             return
 
         self.interrupt_triggered = True
-        print('[打断控制] 检测到用户说话，触发打断')
 
         if self.interrupt_callback:
             self.interrupt_callback()

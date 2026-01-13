@@ -42,7 +42,7 @@ class RoleLoader:
                     if hasattr(module, 'ROLE_CONFIG'):
                         config = module.ROLE_CONFIG
                         self.roles[config['id']] = config
-                        print(f"✓ 加载角色: {config['name']} ({config['id']})")
+                        # print(f"✓ 加载角色: {config['name']} ({config['id']})")  # 静默加载
                     else:
                         print(f"警告: {filename} 缺少 ROLE_CONFIG")
 

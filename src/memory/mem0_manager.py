@@ -59,7 +59,7 @@ class Mem0Manager:
             }
 
             self.memory = Memory.from_config(mem0_config)
-            print("✓ Mem0 初始化成功")
+            # print("✓ Mem0 初始化成功")  # 静默初始化
 
         except ImportError:
             print("⚠️  警告: mem0ai 未安装，请运行: pip install mem0ai")

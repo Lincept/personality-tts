@@ -10,6 +10,7 @@
 - 🔊 **实时语音合成**：支持 Qwen3 TTS、火山引擎 Seed2
 - 🧠 **长期记忆**：使用 Mem0 记住用户信息和对话历史
 - ⚡ **语音打断**：类似打电话的自然交互体验
+- 🎛️ **AEC 回声消除**：基于 WebRTC 的高质量回声消除（新增）
 
 ### 两种使用模式
 1. **文字对话模式**：你打字，AI 说话（带语音朗读）
@@ -65,7 +66,20 @@ pip install -r requirements.txt
 - `pyaudio` - 音频输入/输出
 - `mem0ai` - 长期记忆管理
 
-### 2. 配置 API Key
+### 2. 下载 WebRTC AEC 库文件（可选）
+
+如果需要使用 AEC（回声消除）功能，需要下载 WebRTC 库文件：
+
+1. 访问 [py-xiaozhi](https://github.com/huangjunsen0406/py-xiaozhi) 仓库
+2. 下载对应平台的 `libwebrtc_apm` 库文件
+3. 将文件放置到 `src/webrtc_apm/` 目录下对应的平台文件夹：
+   - macOS ARM64: `src/webrtc_apm/macos/arm64/libwebrtc_apm.dylib`
+   - macOS x64: `src/webrtc_apm/macos/x64/libwebrtc_apm.dylib`
+   - Windows x64: `src/webrtc_apm/windows/x64/libwebrtc_apm.dll`
+
+**注意**：AEC 功能目前不稳定，推荐使用 `--no-aec` 参数 + 耳机的方式。
+
+### 3. 配置 API Key
 
 复制 `.env.example` 为 `.env`，填入你的 API Key：
 
@@ -83,7 +97,7 @@ ENABLE_MEM0=true
 MEM0_USER_ID=your_user_id
 ```
 
-### 3. 运行
+### 4. 运行
 
 #### 模式 1: 文字对话（你打字，AI 说话）
 
@@ -99,6 +113,10 @@ python text_to_speech.py
 #### 模式 2: 语音对话（你说话，AI 说话）
 
 ```bash
+# 推荐方式：禁用 AEC + 使用耳机（最稳定）
+python voice_to_voice.py --no-aec
+
+# 实验性：启用 AEC（可能不稳定）
 python voice_to_voice.py
 ```
 
@@ -109,8 +127,9 @@ python voice_to_voice.py
 
 **注意**：
 - 需要麦克风权限
-- 建议使用耳机避免回音
+- **强烈推荐使用耳机**（避免回声）
 - macOS 需要在"系统设置 → 隐私与安全性 → 麦克风"中授权
+- AEC 功能已实现但不稳定，推荐使用 `--no-aec` + 耳机
 
 ## 📝 使用说明
 
@@ -193,14 +212,25 @@ python voice_to_voice.py
 - **文件**：
   - `mem0_manager.py` - Mem0 管理器
 
-### 3. 语音对话模式
+### 3. AEC 回声消除（新增）
+- **位置**：`src/asr/aec_processor.py`, `src/webrtc_apm/`
+- **功能**：
+  - 基于 WebRTC 的高质量回声消除
+  - 自动捕获扬声器输出作为参考信号
+  - 实时处理，无明显延迟
+  - 内置噪声抑制和高通滤波
+- **支持平台**：macOS ARM64（其他平台需重新编译）
+- **详细文档**：参见 [AEC_INTEGRATION.md](AEC_INTEGRATION.md)
+
+### 4. 语音对话模式
 - **文件**：`voice_to_voice.py`
 - **功能**：
   - 全语音交互（ASR + LLM + TTS）
   - 语音打断（Barge-in）
   - 实时流式处理
+  - 集成 AEC 回声消除
 
-### 4. 打断机制
+### 5. 打断机制
 - **功能**：
   - 检测用户说话时自动停止 AI 播放
   - LLM 停止生成，节省 API 成本

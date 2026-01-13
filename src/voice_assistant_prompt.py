@@ -248,12 +248,6 @@ class VoiceAssistantPrompt:
                 user_id=user_id,
                 limit=5
             )
-            # 调试信息：显示检索到的记忆
-            if mem0_context:
-                print(f"[Mem0] 检索到 {len(mem0_context.split(chr(10)))} 条记忆")
-                print(f"[Mem0] 记忆内容:\n{mem0_context}")
-            else:
-                print(f"[Mem0] 未检索到相关记忆（查询: {user_input}）")
 
         # 格式化用户信息
         user_info_str = self._format_user_info()
@@ -269,7 +263,6 @@ class VoiceAssistantPrompt:
         # 2. 在系统提示中添加 Mem0 长期记忆
         if mem0_context:
             system_prompt += f"\n\n【长期记忆】（来自历史对话）\n{mem0_context}"
-            print(f"[Mem0] 已将记忆注入到系统 Prompt")
 
         # 构建消息列表
         messages = [

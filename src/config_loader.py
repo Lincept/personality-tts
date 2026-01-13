@@ -117,21 +117,12 @@ class ConfigLoader:
         """打印配置状态"""
         validation = self.validate_config()
 
-        print("\n配置状态:")
-        print("=" * 50)
-        print(f"✓ Qwen3 TTS:      {'已配置' if validation['qwen3'] else '未配置'}")
-        print(f"✓ 火山引擎 Seed2: {'已配置' if validation['volcengine'] else '未配置'}")
-        print(f"✓ MiniMax TTS:    {'已配置' if validation['minimax'] else '未配置'}")
-        print(f"✓ OpenAI LLM:     {'已配置' if validation['openai'] else '未配置'}")
+        print("\n✓ 配置加载完成")
 
-        # 显示 Mem0 状态
+        # 只显示 Mem0 状态
         mem0_config = self.config.get("mem0", {})
         mem0_enabled = mem0_config.get("enable_mem0", False)
-        print(f"✓ Mem0 记忆:      {'已启用' if mem0_enabled else '未启用'}")
-        print("=" * 50)
-
-        if not any(validation.values()):
-            print("\n⚠️  警告: 没有配置任何 API 密钥!")
-            print("请编辑 .env 文件或 config/api_keys.json 填入你的 API 密钥")
+        if mem0_enabled:
+            print(f"✓ Mem0 记忆已启用")
 
         return validation

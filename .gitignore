@@ -1,5 +1,8 @@
+# 环境变量和密钥
 .env
 config/api_keys.json
+
+# Python 缓存
 *.pyc
 __pycache__/
 *.pyo
@@ -10,15 +13,29 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-.env
+
+# 虚拟环境
 .venv
 venv/
 ENV/
+
+# 音频文件
 data/audios/*.mp3
 data/audios/*.wav
+
+# 记忆数据库
+data/qdrant/
+
+# WebRTC AEC 库文件（需要单独下载）
+src/webrtc_apm/macos/
+src/webrtc_apm/windows/
+
+# 系统文件
 .DS_Store
+
+# IDE
 .idea/
 .vscode/
+
+# 日志
 *.log
-data/qdrant/meta.json
-data/qdrant/collection/personality_tts_memory/storage.sqlite

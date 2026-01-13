@@ -41,7 +41,7 @@ class RealtimeStreamingPipeline:
         elif client_type == "VolcengineRealtimeTTS":
             # 火山引擎不支持 mode 参数
             audio_queue = realtime_tts_client.start_session(
-                audio_format="mp3",
+                audio_format="pcm",  # 使用 PCM 格式避免电流声
                 sample_rate=24000
             )
         else:
@@ -56,15 +56,20 @@ class RealtimeStreamingPipeline:
         )
         player_thread.start()
 
-        print('\n🤖 AI 回复 (实时流式):')
-        print('-' * 60)
+        print('🤖 学姐: ', end='', flush=True)
 
         # 从 LLM 读取文本并实时发送到 TTS
         full_text = []
+        interrupted = False
         try:
             for chunk in llm_stream:
+                # 检查是否被打断
                 if self.stop_event.is_set():
-                    break
+                    interrupted = True
+                    # 被打断后，继续静默读取 LLM 流（不播放），确保完整文本被收集用于记忆
+                    # 但不显示文本，也不发送到 TTS
+                    full_text.append(chunk)
+                    continue
 
                 # 显示文本
                 if display_text:
@@ -79,13 +84,10 @@ class RealtimeStreamingPipeline:
                 time.sleep(0.01)
 
         except Exception as e:
-            print(f'\n[管道错误] LLM 流式输出: {e}')
+            print(f'\n❌ 错误: {e}')
 
         # 通知 TTS 结束
         realtime_tts_client.finish()
-
-        print('\n' + '-' * 60)
-        print('[管道] LLM 输出完成，等待 TTS 和播放完成...')
 
         # 等待 TTS 完成 - 根据客户端类型
         if hasattr(realtime_tts_client, 'wait_for_completion'):
@@ -94,16 +96,10 @@ class RealtimeStreamingPipeline:
         # 等待播放完成
         player_thread.join(timeout=10)
 
-        # 获取性能指标
+        # 获取性能指标（静默模式）
         metrics = realtime_tts_client.get_metrics()
-        print(f'\n[性能指标]')
-        print(f'  会话 ID: {metrics.get("session_id")}')
-        print(f'  首音频延迟: {metrics.get("first_audio_delay", 0):.3f}秒')
-        print(f'  总文本长度: {len("".join(full_text))} 字符')
 
-        # 如果是火山引擎，断开连接
-        if client_type == "VolcengineRealtimeTTS":
-            realtime_tts_client.disconnect()
+        # 注意：不再自动断开连接，复用全局 TTS 客户端
 
         return {
             "text": "".join(full_text),
