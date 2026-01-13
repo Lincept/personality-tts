@@ -68,12 +68,17 @@ class PyAudioStreamPlayer:
             chunk_count = 0
 
             # 从队列读取并播放
-            while True:
+            while self.is_playing:
                 try:
                     audio_chunk = audio_queue.get(timeout=10)
 
                     if audio_chunk is None:  # 结束信号
                         print(f'[播放器] 播放完成: {chunk_count} 块, {total_bytes} 字节')
+                        break
+
+                    # 检查是否被停止
+                    if not self.is_playing:
+                        print('[播放器] 播放被中断')
                         break
 
                     # 直接写入音频流

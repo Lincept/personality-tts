@@ -1,49 +1,57 @@
-# LLM + TTS 语音助手
+# Personality TTS - 个性化语音助手
 
-一个集成了大语言模型（LLM）和文本转语音（TTS）的实时语音助手系统。
+一个集成了**语音识别（ASR）**、**大语言模型（LLM）**、**文本转语音（TTS）** 和 **长期记忆（Mem0）** 的实时语音助手系统。
 
-> **📖 详细中文文档请查看：[使用说明.md](./使用说明.md)**
+## ✨ 功能特性
 
-## 功能特性
+### 核心功能
+- 🎤 **实时语音识别**：使用阿里云 DashScope Paraformer 实时识别
+- 🤖 **智能对话**：支持 OpenAI 兼容的 LLM API（Qwen、DeepSeek 等）
+- 🔊 **实时语音合成**：支持 Qwen3 TTS、火山引擎 Seed2
+- 🧠 **长期记忆**：使用 Mem0 记住用户信息和对话历史
+- ⚡ **语音打断**：类似打电话的自然交互体验
 
-- ✅ **多 LLM 支持**：支持 OpenAI 兼容的 API（如 DeepSeek、Qwen 等）
-- ✅ **多 TTS 支持**：支持 Qwen3 TTS、火山引擎 Seed2、MiniMax
-- ✅ **实时流式对话**：LLM 逐字输出 → TTS 实时合成 → 边接收边播放
-- ✅ **智能 Prompt 系统**：专为语音对话优化，控制输出格式
-- ✅ **多角色支持**：默认助手、轻松助手、专业助手、陪伴助手
-- ✅ **上下文管理**：用户信息、知识库、对话历史自动管理
+### 两种使用模式
+1. **文字对话模式**：你打字，AI 说话（带语音朗读）
+2. **语音对话模式**：你说话，AI 说话（全语音交互）
 
-## 项目结构
+### 技术特点
+- ✅ **全流式处理**：LLM 流式输出 → TTS 实时合成 → 边接收边播放
+- ✅ **智能 Prompt**：专为语音对话优化，控制输出格式
+- ✅ **多角色支持**：默认助手、专业助手、陪伴助手等
+- ✅ **上下文管理**：自动管理用户信息、知识库、对话历史
+
+## 📁 项目结构
 
 ```
-llm-tts-api-test/
-├── config/
-│   └── test_config.json       # 测试配置
+personality-tts/
 ├── src/
-│   ├── audio/                 # 音频播放模块
-│   │   ├── player.py          # 基础音频播放器
-│   │   ├── streaming_player.py # 流式音频播放器（ffplay）
-│   │   └── pyaudio_player.py  # 流式音频播放器（PyAudio）
+│   ├── asr/                    # 语音识别模块（新增）
+│   │   ├── dashscope_asr.py    # DashScope ASR 客户端
+│   │   ├── audio_input.py      # 麦克风音频输入
+│   │   └── interrupt_controller.py # 语音打断控制器
+│   ├── memory/                 # 记忆模块（新增）
+│   │   └── mem0_manager.py     # Mem0 记忆管理器
+│   ├── audio/                  # 音频播放模块
+│   │   ├── player.py           # 基础播放器
+│   │   ├── streaming_player.py # 流式播放器（ffplay）
+│   │   └── pyaudio_player.py   # 流式播放器（PyAudio）
 │   ├── llm/
-│   │   └── llm_client.py      # LLM 客户端封装
-│   ├── tts/                   # TTS 客户端
-│   │   ├── qwen3_tts.py       # 通义千问 TTS
+│   │   └── llm_client.py       # LLM 客户端
+│   ├── tts/                    # TTS 客户端
 │   │   ├── qwen3_realtime_tts.py # 通义千问实时 TTS
-│   │   ├── volcengine_tts.py  # 火山引擎 Seed2
-│   │   └── minimax_tts.py     # MiniMax TTS
-│   ├── config_loader.py       # 配置加载器
-│   ├── streaming_pipeline.py  # 流式处理管道
-│   ├── realtime_pipeline.py   # 实时处理管道
-│   ├── text_cleaner.py        # 文本清理工具
+│   │   └── volcengine_realtime_tts.py # 火山引擎实时 TTS
+│   ├── streaming_pipeline.py   # 流式处理管道
+│   ├── realtime_pipeline.py    # 实时处理管道
 │   ├── voice_assistant_prompt.py # Prompt 管理系统
-│   └── main.py                # 主程序
-├── .env.example               # 环境变量示例
-├── requirements.txt           # Python 依赖
-├── README.md                  # 本文件
-└── VOICE_ASSISTANT_PROMPT.md  # Prompt 系统详细文档
+│   └── main.py                 # 主程序
+├── text_to_speech.py           # 文字对话模式入口
+├── voice_to_voice.py           # 语音对话模式入口
+├── .env                        # 环境变量配置
+└── README.md                   # 本文件
 ```
 
-## 快速开始
+## 🚀 快速开始
 
 ### 1. 安装依赖
 
@@ -51,294 +59,260 @@ llm-tts-api-test/
 pip install -r requirements.txt
 ```
 
-### 2. 配置 API 密钥
+主要依赖：
+- `dashscope` - 阿里云 DashScope SDK（ASR + TTS）
+- `openai` - OpenAI SDK（LLM）
+- `pyaudio` - 音频输入/输出
+- `mem0ai` - 长期记忆管理
 
-复制 `.env.example` 为 `.env`，填入你的 API 密钥：
+### 2. 配置 API Key
 
-```bash
-cp .env.example .env
-```
-
-编辑 `.env` 文件：
-
-```env
-# LLM API (OpenAI 兼容)
-OPENAI_API_KEY=your_api_key
-OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-chat
-
-# Qwen3 TTS
-QWEN3_TTS_API_KEY=your_qwen3_key
-
-# 火山引擎 Seed2 TTS
-VOLCENGINE_APP_ID=your_app_id
-VOLCENGINE_ACCESS_TOKEN=your_token
-
-# MiniMax TTS
-MINIMAX_API_KEY=your_minimax_key
-MINIMAX_GROUP_ID=your_group_id
-```
-
-### 3. 运行语音助手
+复制 `.env.example` 为 `.env`，填入你的 API Key：
 
 ```bash
-python src/main.py
+# DashScope API Key（用于 ASR 和 TTS）
+QWEN3_API_KEY=sk-your-api-key-here
+
+# LLM API Key
+OPENAI_API_KEY=sk-your-api-key-here
+OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+OPENAI_MODEL=qwen-plus
+
+# Mem0 记忆管理
+ENABLE_MEM0=true
+MEM0_USER_ID=your_user_id
 ```
 
-或者明确指定交互模式：
+### 3. 运行
+
+#### 模式 1: 文字对话（你打字，AI 说话）
 
 ```bash
-python src/main.py interactive
+python text_to_speech.py
 ```
 
-## 使用指南
+功能：
+- 输入文字，AI 会朗读回复
+- 支持实时流式 TTS
+- 支持多种命令（/quit, /role, /clear 等）
 
-### 交互命令
+#### 模式 2: 语音对话（你说话，AI 说话）
 
-启动后，你可以使用以下命令：
-
-```
-/quit                    # 退出程序
-/mode                    # 切换模式 (realtime/streaming/normal)
-/role <角色>             # 切换角色 (default/casual/professional/companion)
-/clear                   # 清空对话历史
-/history                 # 查看对话历史
-/setname <名字>          # 设置用户名
-/addknowledge <内容>     # 添加知识库
-/info                    # 查看当前配置
+```bash
+python voice_to_voice.py
 ```
 
-### 示例对话
+功能：
+- 对着麦克风说话，AI 会语音回复
+- 支持语音打断（说话时自动停止 AI 播放）
+- 全流式处理，低延迟
+
+**注意**：
+- 需要麦克风权限
+- 建议使用耳机避免回音
+- macOS 需要在"系统设置 → 隐私与安全性 → 麦克风"中授权
+
+## 📝 使用说明
+
+### 文字对话模式命令
+
+在文字对话模式中，支持以下命令：
 
 ```
-你: /role casual
-✓ 已切换到角色: 轻松助手
-  风格: 轻松聊天
-  特点: 活泼、幽默、随和
-
-你: /setname 小明
-✓ 用户名已设置为: 小明
-
-你: /addknowledge 喜欢攀岩
-✓ 已添加知识: 喜欢攀岩
-
-你: 推荐一些周末活动
-助手: 小明你好！既然你喜欢攀岩，周末可以去攀岩馆练练手。要不要我推荐几个地方？
-
-你: /info
-当前配置:
-  模式: 实时模式 (LLM逐字→TTS→边播边放) ⚡
-  角色: 轻松助手 (活泼、幽默、随和)
-  TTS: qwen3
-  对话轮数: 1
-  知识库条目: 1
+/quit              - 退出程序
+/mode              - 切换模式（realtime/streaming/normal）
+/provider          - 切换 TTS 提供商（qwen3/volcengine）
+/role <角色>       - 切换角色
+/clear             - 清空对话历史
+/history           - 查看对话历史
+/setname <名字>    - 设置用户名
+/memories          - 查看长期记忆
+/clearmem          - 清除长期记忆
+/info              - 查看当前配置
 ```
 
-## 三种对话模式
+### 可用角色
 
-### 1. 实时模式（Realtime）⚡
+- `default` - 默认助手（友好、专业）
+- `casual` - 轻松助手（随意、幽默）
+- `professional` - 专业助手（正式、严谨）
+- `companion` - 陪伴助手（温暖、关怀）
+- `funny` - 幽默助手（搞笑、活泼）
 
-**最快**，延迟最低：
-- LLM 逐字输出
-- TTS 实时接收并合成
-- 音频边接收边播放
-
-```python
-# 仅支持 Qwen3 实时 TTS
-test.chat_and_speak_realtime("你好")
+切换角色：
+```
+/role casual
 ```
 
-### 2. 流式模式（Streaming）
+### 语音对话模式
 
-**较快**，按句播放：
-- LLM 流式输出
-- 按句子分割
-- 每句合成后立即播放
+1. 启动程序后，等待提示 `[等待你说话...]`
+2. 对着麦克风说话
+3. AI 会自动识别并回复
+4. 在 AI 说话时，你可以直接开始说话打断它
+5. 按 `Ctrl+C` 退出
 
-```python
-test.chat_and_speak_streaming("你好", tts_provider="qwen3")
+## 🧠 长期记忆功能
+
+系统使用 Mem0 自动记住：
+- 用户的个人信息（姓名、偏好等）
+- 重要的对话内容
+- 用户的习惯和兴趣
+
+查看记忆：
+```
+/memories
 ```
 
-### 3. 普通模式（Normal）
-
-**最稳定**，等待完整回复：
-- 等待 LLM 完整回复
-- 一次性合成
-- 播放完整音频
-
-```python
-test.chat_and_speak("你好", tts_provider="qwen3")
+清除记忆：
+```
+/clearmem
 ```
 
-## Prompt 系统
+## 🎯 新增功能说明
 
-本项目包含专为语音对话优化的 Prompt 系统，详见 [VOICE_ASSISTANT_PROMPT.md](VOICE_ASSISTANT_PROMPT.md)。
+相比原始版本，本项目新增了以下功能：
 
-### 核心特性
+### 1. 语音识别模块（ASR）
+- **位置**：`src/asr/`
+- **功能**：
+  - 实时语音识别（DashScope Paraformer）
+  - 麦克风音频输入
+  - 语音打断控制
+- **文件**：
+  - `dashscope_asr.py` - ASR 客户端
+  - `audio_input.py` - 麦克风录音
+  - `interrupt_controller.py` - 打断控制器
 
-1. **输出格式控制**
-   - 简洁回答（2-3 句话，最多 50 字）
-   - 禁止 Markdown 格式
-   - 禁止特殊符号和列表
-   - 口语化表达
+### 2. 长期记忆模块（Mem0）
+- **位置**：`src/memory/`
+- **功能**：
+  - 自动提取和存储重要信息
+  - 基于上下文检索相关记忆
+  - 支持多用户记忆隔离
+- **文件**：
+  - `mem0_manager.py` - Mem0 管理器
 
-2. **多角色支持**
-   - `default` - 默认助手（友好、专业、简洁）
-   - `casual` - 轻松助手（活泼、幽默、随和）
-   - `professional` - 专业助手（严谨、专业、高效）
-   - `companion` - 陪伴助手（温暖、关心、耐心）
+### 3. 语音对话模式
+- **文件**：`voice_to_voice.py`
+- **功能**：
+  - 全语音交互（ASR + LLM + TTS）
+  - 语音打断（Barge-in）
+  - 实时流式处理
 
-3. **上下文管理**
-   - 用户信息（姓名、偏好、上下文）
-   - 知识库（可添加自定义知识）
-   - 对话历史（自动保留最近 10 轮）
+### 4. 打断机制
+- **功能**：
+  - 检测用户说话时自动停止 AI 播放
+  - LLM 停止生成，节省 API 成本
+  - 被打断的对话不保存到历史
+- **实现**：
+  - 在 `voice_to_voice.py` 中实现
+  - 使用 `InterruptController` 检测打断
+  - 通过 `pipeline.stop()` 停止 LLM 和 TTS
 
-### 使用示例
-
-```python
-from src.voice_assistant_prompt import VoiceAssistantPrompt
-
-# 创建 Prompt 管理器
-prompt = VoiceAssistantPrompt(role="casual")
-
-# 设置用户信息
-prompt.set_user_info(
-    name="小明",
-    preferences={"运动": "攀岩"}
-)
-
-# 添加知识
-prompt.add_knowledge("用户是攀岩初学者", category="运动")
-
-# 获取消息列表
-messages = prompt.get_messages("推荐一些攀岩装备")
-
-# 传递给 LLM
-response = llm_client.chat(messages)
-```
-
-## 配置说明
+## ⚙️ 配置说明
 
 ### LLM 配置
 
 支持任何 OpenAI 兼容的 API：
 
-```env
-OPENAI_API_KEY=your_key
-OPENAI_BASE_URL=https://api.deepseek.com  # 或其他兼容 API
-OPENAI_MODEL=deepseek-chat                # 或其他模型
+```bash
+# 通义千问
+OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+OPENAI_MODEL=qwen-plus
+
+# DeepSeek
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_MODEL=deepseek-chat
+
+# OpenAI
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4
 ```
 
 ### TTS 配置
 
-#### Qwen3 TTS（推荐用于实时模式）
+支持两种 TTS 提供商：
 
-```env
-QWEN3_TTS_API_KEY=your_key
-```
+1. **Qwen3 TTS**（推荐）
+   - 首包延迟：~200ms
+   - 音质：优秀
+   - 支持多种音色
 
-支持的音色：
-- `Cherry` - 女声（默认）
-- `Stella` - 女声
-- `Bella` - 女声
-- `Cindy` - 女声
+2. **火山引擎 Seed2**
+   - 首包延迟：~300ms
+   - 音质：优秀
+   - 需要单独申请 API
 
-#### 火山引擎 Seed2
-
-```env
-VOLCENGINE_APP_ID=your_app_id
-VOLCENGINE_ACCESS_TOKEN=your_token
-```
-
-#### MiniMax
-
-```env
-MINIMAX_API_KEY=your_key
-MINIMAX_GROUP_ID=your_group_id
-```
-
-## 技术架构
-
-### 实时流式处理流程
-
-```
-用户输入
-  ↓
-LLM 流式生成 (逐字输出)
-  ↓
-实时 TTS (逐字接收，流式合成)
-  ↓
-流式音频播放 (边接收边播放)
-  ↓
-用户听到语音
-```
-
-### 关键技术
-
-1. **流式处理**：使用 Python 生成器实现零延迟传递
-2. **实时 TTS**：Qwen3 支持流式输入和输出
-3. **流式播放**：PyAudio 或 ffplay 实现边接收边播放
-4. **Prompt 优化**：专为语音场景设计，控制输出格式
-
-## 依赖项
-
-主要依赖：
-
-```
-openai>=1.0.0          # LLM 客户端
-requests>=2.31.0       # HTTP 请求
-python-dotenv>=1.0.0   # 环境变量
-pyaudio>=0.2.13        # 音频播放（可选）
-```
-
-## 常见问题
-
-### 1. PyAudio 安装失败
-
-PyAudio 是可选依赖，如果安装失败，系统会自动使用 ffplay：
+### Mem0 配置
 
 ```bash
-# macOS
+# 启用 Mem0
+ENABLE_MEM0=true
+
+# Mem0 使用的 LLM（用于记忆提取）
+MEM0_LLM_MODEL=qwen-turbo
+
+# 用户 ID（用于区分不同用户）
+MEM0_USER_ID=your_user_id
+```
+
+## 🔧 故障排除
+
+### 麦克风无权限
+
+**macOS**:
+```
+系统设置 → 隐私与安全性 → 麦克风 → 允许终端/Python
+```
+
+### PyAudio 安装失败
+
+**macOS**:
+```bash
 brew install portaudio
 pip install pyaudio
+```
 
-# Ubuntu/Debian
+**Linux**:
+```bash
 sudo apt-get install portaudio19-dev
 pip install pyaudio
 ```
 
-### 2. 音频播放失败
+### 语音识别延迟高
 
-确保系统安装了 ffplay：
+1. 检查网络连接
+2. 确保使用稳定的网络环境
+3. 第二次识别会更快（连接已建立）
 
-```bash
-# macOS
-brew install ffmpeg
+### 两个音频同时播放
 
-# Ubuntu/Debian
-sudo apt-get install ffmpeg
-```
+确保：
+1. 使用耳机（避免回音）
+2. 打断功能正常工作
+3. 等待时间足够（已设置为 0.3 秒）
 
-### 3. LLM 输出仍包含 Markdown
+## 📊 性能指标
 
-Prompt 不是万能的，建议：
-1. 降低 temperature 参数（0.7 左右）
-2. 使用 `text_cleaner.py` 进行后处理
-3. 尝试不同的模型
+| 环节 | 延迟 | 说明 |
+|------|------|------|
+| ASR 首次识别 | 2-4秒 | 包含连接初始化 |
+| ASR 后续识别 | 1-2秒 | 连接已建立 |
+| LLM 首 token | 200-500ms | 流式输出 |
+| TTS 首包 | 200-500ms | 实时合成 |
+| 总延迟 | 2-5秒 | 端到端 |
 
-### 4. 实时模式延迟高
-
-实时模式需要：
-1. 稳定的网络连接
-2. 低延迟的 LLM API
-3. 支持流式的 TTS API（目前仅 Qwen3）
-
-## 文档
-
-- [使用说明.md](./使用说明.md) - 完整的中文使用文档
-- [VOICE_ASSISTANT_PROMPT.md](./VOICE_ASSISTANT_PROMPT.md) - Prompt 系统详细文档
-- [roles/README.md](./roles/README.md) - 角色系统说明
-
-## 许可证
+## 📄 许可证
 
 MIT License
+
+## 🙏 致谢
+
+- [DashScope](https://dashscope.aliyuncs.com/) - 提供 ASR 和 TTS 服务
+- [Mem0](https://mem0.ai/) - 提供长期记忆管理
+- [OpenAI](https://openai.com/) - 提供 LLM API 标准
+
+## 📮 联系方式
+
+如有问题或建议，请提交 Issue。
