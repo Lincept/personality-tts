@@ -129,7 +129,8 @@ python voice_to_voice.py
 - 需要麦克风权限
 - **强烈推荐使用耳机**（避免回声）
 - macOS 需要在"系统设置 → 隐私与安全性 → 麦克风"中授权
-- AEC 功能已实现但不稳定，推荐使用 `--no-aec` + 耳机
+- AEC 功能已优化，参考 py-xiaozhi 实现
+- 详细 AEC 设置指南：[AEC_SETUP_GUIDE.md](AEC_SETUP_GUIDE.md)
 
 ## 📝 使用说明
 

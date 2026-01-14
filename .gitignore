@@ -39,3 +39,7 @@ src/webrtc_apm/windows/
 
 # 日志
 *.log
+
+# Claude Code 配置（本地优化，不提交）
+.claude/
+.claudeignore

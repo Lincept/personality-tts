@@ -33,14 +33,16 @@ def load_env_file():
 class VoiceInteractiveMode:
     """语音交互模式 - 支持语音输入和打断，集成 AEC 回声消除"""
 
-    def __init__(self, enable_aec: bool = True, use_aggregate_device: bool = False, device_index: Optional[int] = None):
+    def __init__(self, enable_aec: bool = True, device_index: Optional[int] = None, asr_model: str = "paraformer-realtime-v2"):
         """
         初始化语音交互模式
 
         Args:
-            enable_aec: 是否启用 AEC（回声消除）
-            use_aggregate_device: 是否使用聚合设备（硬件 AEC）
-            device_index: 音频设备索引（聚合设备的索引）
+            enable_aec: 是否启用 AEC（回声消除）- 需要配置聚合设备
+            device_index: 音频设备索引（聚合设备的索引，启用 AEC 时必须提供）
+            asr_model: ASR 模型选择
+                - "paraformer-realtime-v2": Paraformer 实时模型 v2（推荐，准确度高）
+                - "fun-asr-realtime-2025-11-07": FunASR 2025 版本（默认）
         """
         # 加载环境变量
         env_vars = load_env_file()
@@ -58,32 +60,38 @@ class VoiceInteractiveMode:
         self.llm_tts.initialize_llm()
 
         # 初始化 ASR
-        self.asr = DashScopeASR(api_key=api_key)
+        self.asr = DashScopeASR(api_key=api_key, model=asr_model)
+        print(f"🎤 ASR 模型: {asr_model}")
 
         # 初始化 AEC 处理器（如果启用）
         self.enable_aec = enable_aec
-        self.use_aggregate_device = use_aggregate_device
         self.aec_processor = None
 
         if enable_aec:
+            # 检查是否提供了设备索引
+            if device_index is None:
+                raise ValueError(
+                    '启用 AEC 时必须提供聚合设备索引！\n'
+                    '请先运行: python voice_to_voice.py --list-devices\n'
+                    '然后使用: python voice_to_voice.py --device-index <索引>'
+                )
+
             try:
                 self.aec_processor = SimpleAEC(sample_rate=16000)
-                if use_aggregate_device:
-                    print("🎛️ AEC（回声消除）已启用 - 硬件模式（聚合设备）")
-                else:
-                    print("🎛️ AEC（回声消除）已启用 - 软件模式（不推荐，可能不稳定）")
+                print("🎛️ AEC（回声消除）已启用 - 使用聚合设备 + BlackHole")
             except Exception as e:
                 print(f"⚠️ AEC 初始化失败: {e}")
                 print("   将继续运行但不使用 AEC")
                 self.enable_aec = False
 
         # 初始化音频输入（传入 AEC 处理器和聚合设备配置）
+        # 使用 WebRTC 标准帧大小：10ms = 160 samples @ 16kHz
         self.audio_input = AudioInput(
             sample_rate=16000,
-            chunk_size=1600,
+            chunk_size=160,  # 修改为 10ms（WebRTC 标准）
             enable_aec=self.enable_aec,
             aec_processor=self.aec_processor,
-            use_aggregate_device=use_aggregate_device,
+            use_aggregate_device=enable_aec,  # 启用 AEC 就使用聚合设备
             device_index=device_index
         )
 
@@ -125,19 +133,22 @@ class VoiceInteractiveMode:
             return
 
         # 如果 AI 正在说话，检查是否是真实打断
-        # 提高阈值：只有当识别的文本足够长（> 8 个字符）时才认为是真实打断
+        # 优化：降低阈值到 4 个字符，提高打断响应速度
         if self.is_tts_playing:
             text_length = len(text.strip())
-            if text_length < 8:
+            # 过滤太短的文本（< 3 个字符）和常见回声词
+            if text_length < 3:
                 print(f'\n⚠️ 忽略短文本（可能是回声）: "{text}" (长度: {text_length})')
                 return
-            else:
-                # 额外检查：如果文本包含常见的回声词，也忽略
-                echo_keywords = ['嗯', '啊', '哦', '呃', '行', '好', '是', '不是', '对', '没']
-                if any(keyword == text.strip() for keyword in echo_keywords):
-                    print(f'\n⚠️ 忽略回声关键词: "{text}"')
-                    return
-                print(f'\n🔔 检测到打断: "{text}" (长度: {text_length})')
+
+            # 检查是否是单个回声词（1-2 个字符的常见词）
+            echo_keywords = ['嗯', '啊', '哦', '呃', '嗯嗯', '啊啊', '哦哦']
+            if text.strip() in echo_keywords:
+                print(f'\n⚠️ 忽略回声关键词: "{text}"')
+                return
+
+            # 3 个字符以上的文本认为是真实打断
+            print(f'\n🔔 检测到打断: "{text}" (长度: {text_length})')
 
         # 防止说话太快时重复触发（间隔少于1秒的忽略）
         current_time = time.time()
@@ -178,50 +189,11 @@ class VoiceInteractiveMode:
             # 复用全局 TTS 客户端（不再每次创建新的）
             from src.audio.pyaudio_player import PyAudioStreamPlayer
             from src.realtime_pipeline import RealtimeStreamingPipeline
-            import numpy as np
-
-            # 创建参考音频回调（用于 AEC）
-            def reference_callback(audio_data: bytes):
-                """将播放的音频作为参考信号传递给 AEC"""
-                if self.enable_aec and self.audio_input:
-                    try:
-                        # TTS 输出是 24kHz，需要重采样到 16kHz
-                        audio_array = np.frombuffer(audio_data, dtype=np.int16)
-
-                        # 使用 scipy 进行高质量重采样（如果可用）
-                        try:
-                            from scipy import signal as scipy_signal
-                            # 24000 -> 16000 的重采样
-                            num_samples = int(len(audio_array) * 16000 / 24000)
-                            resampled = scipy_signal.resample(audio_array, num_samples).astype(np.int16)
-                        except ImportError:
-                            # 如果没有 scipy，使用简单的降采样
-                            # 24000 -> 16000 (3:2)
-                            if len(audio_array) >= 3:
-                                indices = np.arange(0, len(audio_array), 1.5).astype(int)
-                                indices = indices[indices < len(audio_array)]
-                                resampled = audio_array[indices]
-                            else:
-                                resampled = audio_array
-
-                        # 添加到 AEC 参考信号
-                        self.audio_input.add_reference_audio(resampled.tobytes())
-
-                        # 调试：每 50 次打印一次
-                        if not hasattr(self, '_ref_counter'):
-                            self._ref_counter = 0
-                        self._ref_counter += 1
-                        if self._ref_counter % 50 == 0:
-                            ref_rms = np.sqrt(np.mean(resampled.astype(np.float32) ** 2))
-                            print(f"[AEC] 参考信号: {len(resampled)} 样本, RMS={ref_rms:.1f}")
-
-                    except Exception as e:
-                        print(f"[AEC] 参考信号处理错误: {e}")
 
             # 创建流式播放器（每次创建新的，避免状态冲突）
+            # 注意：使用聚合设备时，参考信号通过 BlackHole 自动捕获，无需回调
             streaming_player = PyAudioStreamPlayer(
-                sample_rate=24000,
-                reference_callback=reference_callback if self.enable_aec else None
+                sample_rate=24000
             )
 
             # 创建实时管道
@@ -351,10 +323,12 @@ def main():
     """主函数"""
     import argparse
 
-    parser = argparse.ArgumentParser(description='语音交互模式 - 支持 AEC 回声消除')
-    parser.add_argument('--no-aec', action='store_true', help='禁用 AEC（回声消除）')
-    parser.add_argument('--use-aggregate', action='store_true', help='使用聚合设备（硬件 AEC，推荐）')
-    parser.add_argument('--device-index', type=int, help='音频设备索引（聚合设备的索引）')
+    parser = argparse.ArgumentParser(description='语音交互模式 - 支持 AEC 回声消除（需要聚合设备 + BlackHole）')
+    parser.add_argument('--no-aec', action='store_true', help='禁用 AEC（回声消除），使用耳机模式')
+    parser.add_argument('--device-index', type=int, help='聚合设备索引（启用 AEC 时必须提供）')
+    parser.add_argument('--asr-model', type=str, default='paraformer-realtime-v2',
+                        choices=['paraformer-realtime-v2', 'fun-asr-realtime-2025-11-07'],
+                        help='ASR 模型选择（默认: paraformer-realtime-v2）')
     parser.add_argument('--list-devices', action='store_true', help='列出所有音频设备')
     args = parser.parse_args()
 
@@ -370,23 +344,20 @@ def main():
                 print(f"\n设备 {i}: {info['name']}")
                 print(f"  输入通道数: {info['maxInputChannels']}")
                 print(f"  采样率: {int(info['defaultSampleRate'])} Hz")
-                if 'Aggregate' in info['name']:
+                if 'Aggregate' in info['name'] or 'aggregate' in info['name'].lower():
                     print("  ⭐ 这是聚合设备！")
         print("=" * 80)
+        print("\n使用方法：")
+        print("  1. 禁用 AEC（耳机模式）：python voice_to_voice.py --no-aec")
+        print("  2. 启用 AEC（外放模式）：python voice_to_voice.py --device-index <聚合设备索引>")
         p.terminate()
-        return
-
-    # 检查参数
-    if args.use_aggregate and args.device_index is None:
-        print("❌ 错误：使用 --use-aggregate 时必须指定 --device-index")
-        print("   请先运行 python list_audio_devices.py 查看设备索引")
         return
 
     try:
         voice_mode = VoiceInteractiveMode(
             enable_aec=not args.no_aec,
-            use_aggregate_device=args.use_aggregate,
-            device_index=args.device_index
+            device_index=args.device_index,
+            asr_model=args.asr_model
         )
         voice_mode.start()
     except Exception as e:

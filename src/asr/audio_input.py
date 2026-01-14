@@ -1,7 +1,7 @@
 """
 音频输入模块 - 从麦克风录音
 支持 AEC（回声消除）功能
-支持聚合设备（硬件 AEC）
+支持聚合设备（硬件 AEC）- 参考 py-xiaozhi 优化
 """
 import pyaudio
 import threading
@@ -12,11 +12,11 @@ from typing import Callable, Optional
 
 
 class AudioInput:
-    """麦克风音频输入"""
+    """麦克风音频输入 - 优化 AEC 支持"""
 
     def __init__(self,
                  sample_rate: int = 16000,
-                 chunk_size: int = 1600,  # 100ms @ 16kHz
+                 chunk_size: int = 160,  # 修改为 10ms @ 16kHz（WebRTC 标准）
                  channels: int = 1,
                  format: int = pyaudio.paInt16,
                  enable_aec: bool = False,
@@ -28,7 +28,7 @@ class AudioInput:
 
         Args:
             sample_rate: 采样率（Hz）
-            chunk_size: 每次读取的帧数
+            chunk_size: 每次读取的帧数（默认 160 = 10ms @ 16kHz，WebRTC 标准）
             channels: 声道数（1=单声道，2=立体声）
             format: 音频格式
             enable_aec: 是否启用 AEC（回声消除）
@@ -62,6 +62,10 @@ class AudioInput:
                 print(f"   - 通道 2: BlackHole 右声道")
         else:
             self.channels = channels
+
+        # 统计信息（用于调试）
+        self._frame_count = 0
+        self._last_stats_time = time.time()
 
     def start(self, audio_callback: Optional[Callable[[bytes], None]] = None):
         """
@@ -99,7 +103,7 @@ class AudioInput:
         # if status:
         #     print(f'[音频输入] 状态: {status}')  # 静默
 
-        # 如果使用聚合设备（硬件 AEC）
+        # 如果使用聚合设备（AEC 模式）
         if self.use_aggregate_device and self.channels >= 2 and self.enable_aec and self.aec_processor:
             try:
                 # 转换为 numpy 数组
@@ -161,45 +165,6 @@ class AudioInput:
                 if self.audio_callback:
                     self.audio_callback(processed_data)
 
-        # 如果启用 AEC 但不是聚合设备（软件 AEC，已弃用）
-        elif self.enable_aec and self.aec_processor and not self.use_aggregate_device:
-            try:
-                # 转换为 numpy 数组
-                audio_array = np.frombuffer(in_data, dtype=np.int16)
-
-                # 计算原始音量
-                original_rms = np.sqrt(np.mean(audio_array.astype(np.float32) ** 2))
-
-                # 应用 AEC 处理
-                processed_array = self.aec_processor.process(audio_array)
-
-                # 计算处理后音量
-                processed_rms = np.sqrt(np.mean(processed_array.astype(np.float32) ** 2))
-
-                # 调试：每 50 次打印一次
-                if not hasattr(self, '_aec_counter'):
-                    self._aec_counter = 0
-                self._aec_counter += 1
-                if self._aec_counter % 50 == 0:
-                    reduction = original_rms - processed_rms
-                    reduction_percent = (reduction / original_rms * 100) if original_rms > 0 else 0
-                    print(f"[AEC] 麦克风: {original_rms:.1f} → {processed_rms:.1f} (消除: {reduction:.1f}, {reduction_percent:.1f}%)")
-
-                # 转换回字节
-                processed_data = processed_array.tobytes()
-
-                # 将处理后的音频数据放入队列
-                self.audio_queue.put(processed_data)
-
-                # 调用用户回调
-                if self.audio_callback:
-                    self.audio_callback(processed_data)
-            except Exception as e:
-                print(f'[音频输入] AEC 处理错误: {e}')
-                # 如果 AEC 处理失败，使用原始音频
-                self.audio_queue.put(in_data)
-                if self.audio_callback:
-                    self.audio_callback(in_data)
         else:
             # 不使用 AEC，直接传递
             self.audio_queue.put(in_data)
@@ -223,22 +188,6 @@ class AudioInput:
             self.stream = None
 
         # print('[音频输入] 停止录音')  # 静默
-
-    def add_reference_audio(self, audio_data: bytes):
-        """
-        添加参考音频（扬声器输出）到 AEC 处理器
-
-        Args:
-            audio_data: 扬声器播放的音频数据（bytes）
-        """
-        if self.enable_aec and self.aec_processor:
-            try:
-                # 转换为 numpy 数组
-                audio_array = np.frombuffer(audio_data, dtype=np.int16)
-                # 添加到 AEC 处理器
-                self.aec_processor.add_reference(audio_array)
-            except Exception as e:
-                print(f'[音频输入] 添加参考音频错误: {e}')
 
     def close(self):
         """关闭音频设备"""

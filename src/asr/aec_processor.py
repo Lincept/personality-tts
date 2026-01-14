@@ -59,7 +59,7 @@ class WebRTCAECProcessor:
         self._initialize()
 
     def _initialize(self):
-        """初始化 WebRTC AEC"""
+        """初始化 WebRTC AEC - 参考 py-xiaozhi 优化配置"""
         if not self._is_macos:
             print(f"⚠️ {self._platform.capitalize()} 平台暂不支持 WebRTC AEC")
             return
@@ -72,21 +72,47 @@ class WebRTCAECProcessor:
             # 创建 WebRTC APM 实例
             self.apm = WebRTCAudioProcessing()
 
-            # 创建配置
+            # 创建配置 - 参考 py-xiaozhi 的优化配置
             apm_config = create_default_config()
 
-            # 启用回声消除
-            apm_config.echo.enabled = True
-            apm_config.echo.mobile_mode = False
-            apm_config.echo.enforce_high_pass_filtering = True
+            # Pipeline 配置 - 使用 WebRTC 优化频率
+            apm_config.pipeline_config.maximum_internal_processing_rate = 16000  # WebRTC 优化频率
+            apm_config.pipeline_config.multi_channel_render = False
+            apm_config.pipeline_config.multi_channel_capture = False
 
-            # 启用噪声抑制
+            # 启用回声消除 - 使用标准模式
+            apm_config.echo.enabled = True
+            apm_config.echo.mobile_mode = False  # 标准模式，非移动模式
+            apm_config.echo.enforce_high_pass_filtering = True  # 强制高通滤波
+
+            # 启用噪声抑制 - 中等级别（避免过度抑制）
             apm_config.noise_suppress.enabled = True
-            apm_config.noise_suppress.noise_level = 2  # HIGH
+            apm_config.noise_suppress.noise_level = 1  # MODERATE（中等）
+            apm_config.noise_suppress.analyze_linear_aec_output_when_available = True
 
             # 启用高通滤波器
             apm_config.high_pass.enabled = True
             apm_config.high_pass.apply_in_full_band = True
+
+            # 禁用 PreAmplifier（避免失真）
+            apm_config.pre_amp.enabled = False
+            apm_config.pre_amp.fixed_gain_factor = 1.0
+
+            # 禁用 LevelAdjustment（减少处理冲突）
+            apm_config.level_adjustment.enabled = False
+
+            # 禁用 TransientSuppression（避免切割语音）
+            apm_config.transient_suppress.enabled = False
+
+            # 启用 GainController1 - 轻度增益控制
+            apm_config.gain_control1.enabled = True
+            apm_config.gain_control1.controller_mode = 1  # ADAPTIVE_DIGITAL
+            apm_config.gain_control1.target_level_dbfs = 3
+            apm_config.gain_control1.compression_gain_db = 9
+            apm_config.gain_control1.enable_limiter = True
+
+            # 禁用 GainController2（避免冲突）
+            apm_config.gain_control2.enabled = False
 
             # 应用配置
             result = self.apm.apply_config(apm_config)
@@ -97,15 +123,16 @@ class WebRTCAECProcessor:
             self.capture_config = self.apm.create_stream_config(self.sample_rate, 1)
             self.render_config = self.apm.create_stream_config(self.sample_rate, 1)
 
-            # 设置流延迟
-            self.apm.set_stream_delay_ms(0)  # 0ms 延迟（实时系统）
+            # 设置流延迟 - 关键修复！参考 py-xiaozhi
+            self.apm.set_stream_delay_ms(40)  # 40ms 延迟（考虑实际传播和处理延迟）
 
             self._is_initialized = True
-            print("✅ WebRTC AEC 初始化完成")
-            print("   - 回声消除: 已启用")
-            print("   - 噪声抑制: HIGH")
+            print("✅ WebRTC AEC 初始化完成（优化配置）")
+            print("   - 回声消除: 已启用（标准模式）")
+            print("   - 噪声抑制: MODERATE（中等）")
             print("   - 高通滤波: 已启用")
-            print("   - 流延迟: 0ms（实时）")
+            print("   - 流延迟: 40ms（优化）")
+            print("   - 增益控制: 自适应数字")
 
         except Exception as e:
             print(f"❌ WebRTC AEC 初始化失败: {e}")
