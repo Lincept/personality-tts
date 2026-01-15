@@ -87,6 +87,13 @@ class ConfigLoader:
         # 5) Mem0（即使 JSON 不存在也给出默认结构）
         self.config.setdefault("mem0", {})
 
+        # 记忆后端选择（为适配不同记忆框架预留）
+        # - MEMORY_BACKEND：全局选择（推荐）
+        # - MEM0_BACKEND：历史/局部选择（兼容）
+        # 当前内置实现：mem0 / none
+        backend = self._get_env("MEMORY_BACKEND", "MEM0_BACKEND", default="mem0")
+        self.config["mem0"]["backend"] = str(backend).strip().lower() if backend else "mem0"
+
         # 从环境变量覆盖 mem0 配置
         # 开关：仅当 env 显式设置时启用；否则默认关闭
         enable_mem0_env = os.getenv("ENABLE_MEM0")
@@ -169,16 +176,25 @@ class ConfigLoader:
 
         print("\n✓ 配置加载完成")
 
-        # 显示 Mem0 状态
+        # 显示 Memory/Mem0 状态
         mem0_config = self.config.get("mem0", {})
+        backend = str(mem0_config.get("backend", "mem0")).strip().lower()
         mem0_enabled = mem0_config.get("enable_mem0", False)
         graph_enabled = mem0_config.get("enable_graph", False)
 
-        if mem0_enabled:
-            print(f"✓ Mem0 记忆已启用")
-            if graph_enabled:
-                print(f"✓ 知识图谱已启用")
+        if backend in {"none", "null", "disabled"}:
+            print("✓ 长期记忆已关闭（MEMORY_BACKEND=none）")
+        elif backend == "mem0":
+            if mem0_enabled:
+                print("✓ 长期记忆后端: mem0")
+                if graph_enabled:
+                    print("✓ 知识图谱已启用")
+                else:
+                    print("  知识图谱未启用（仅向量存储）")
             else:
-                print(f"  知识图谱未启用（仅向量存储）")
+                print("  长期记忆后端: mem0（未启用，设置 ENABLE_MEM0=true 可开启）")
+        else:
+            # 预留其它后端：当前仓库默认会降级为空实现
+            print(f"⚠️  已选择长期记忆后端: {backend}（当前未内置实现，将降级为关闭）")
 
         return validation

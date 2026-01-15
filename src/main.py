@@ -28,7 +28,7 @@ from src.config_loader import ConfigLoader
 from src.realtime_pipeline import RealtimeStreamingPipeline
 from src.voice_assistant_prompt import VoiceAssistantPrompt
 from src.role_loader import RoleLoader
-from src.memory.mem0_manager import Mem0Manager
+from src.memory.factory import create_memory_store
 from src.memory.memory_chat import MemoryEnhancedChat
 from src.asr import DashScopeASR, AudioInput, InterruptController
 from src.asr.aec_processor import SimpleAEC
@@ -514,9 +514,8 @@ class LLMTTSTest:
 
         # 初始化 Mem0 记忆管理器
         mem0_config = self.config.get("mem0", {})
-        self.mem0_manager = None
-        if mem0_config.get("enable_mem0", False):
-            self.mem0_manager = Mem0Manager(mem0_config)
+        # 统一通过工厂创建，便于未来接入其它记忆框架
+        self.mem0_manager = create_memory_store(mem0_config)
 
         # 用户ID（从配置获取）
         self.user_id = mem0_config.get("user_id", "default_user")
@@ -532,7 +531,7 @@ class LLMTTSTest:
             api_key=llm_config.get("api_key"),
             base_url=llm_config.get("base_url"),
             model=llm_config.get("model", "qwen3-max"),
-            mem0_manager=self.mem0_manager,
+            memory_store=self.mem0_manager,
             user_id=self.user_id,
             role_description=self.role_description,
             verbose=False  # 生产模式关闭详细日志

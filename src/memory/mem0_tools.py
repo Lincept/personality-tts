@@ -1,9 +1,17 @@
+"""Deprecated: Mem0 专用工具封装（兼容层）。
+
+历史上该文件与 memory_tools.py 存在重复实现。
+现在推荐使用 src.memory.tools.MemoryTools（框架无关）。
+
+本文件保留原类名/方法签名，内部改为调用 MemoryStore 接口，方便未来替换后端。
 """
-Mem0 记忆工具 - 提供 LLM 可调用的记忆管理工具
-借鉴 mem0 的工具化方法，让 LLM 主动管理记忆
-"""
-from typing import Dict, List, Optional
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
 import json
+
+from .store import MemoryStore
 
 
 class Mem0Tools:
@@ -17,7 +25,7 @@ class Mem0Tools:
             mem0_manager: Mem0Manager 实例
             user_id: 当前用户ID
         """
-        self.mem0_manager = mem0_manager
+        self.mem0_manager: MemoryStore = mem0_manager
         self.user_id = user_id
 
     def get_tool_definitions(self) -> List[Dict]:
@@ -27,7 +35,7 @@ class Mem0Tools:
         Returns:
             工具定义列表
         """
-        if not self.mem0_manager or not self.mem0_manager.enabled:
+        if not self.mem0_manager or not getattr(self.mem0_manager, "enabled", False):
             return []
 
         return [
@@ -148,33 +156,20 @@ class Mem0Tools:
             })
 
         try:
-            # 格式化记忆内容
-            formatted_memory = f"[{category}] {memory_content}"
-
-            # 保存到 Mem0
-            messages = [
-                {"role": "user", "content": memory_content}
-            ]
-            result = self.mem0_manager.memory.add(
-                messages,
+            # category 作为 metadata 传入，供后端选择性使用
+            self.mem0_manager.save(
+                memory_content,
                 user_id=self.user_id,
-                metadata={"category": category}
+                kind="fact",
+                metadata={"category": category},
             )
 
-            print(f"[Mem0Tools] 已保存记忆: {memory_content[:50]}... (类别: {category})")
-
-            return json.dumps({
-                "success": True,
-                "message": f"已保存记忆: {memory_content}",
-                "category": category
-            }, ensure_ascii=False)
-
+            return json.dumps(
+                {"success": True, "message": f"已保存记忆: {memory_content}", "category": category},
+                ensure_ascii=False,
+            )
         except Exception as e:
-            print(f"[Mem0Tools] 保存记忆失败: {e}")
-            return json.dumps({
-                "success": False,
-                "error": f"保存失败: {str(e)}"
-            })
+            return json.dumps({"success": False, "error": f"保存失败: {str(e)}"})
 
     def _search_memories(self, query: str, limit: int = 5) -> str:
         """
@@ -194,49 +189,23 @@ class Mem0Tools:
             })
 
         try:
-            print(f"[Mem0Tools] 搜索记忆: {query}")
+            records = self.mem0_manager.search(query=query, user_id=self.user_id, limit=limit)
 
-            results = self.mem0_manager.memory.search(
-                query=query,
-                user_id=self.user_id,
-                limit=limit
-            )
-
-            if not results.get("results"):
-                print(f"[Mem0Tools] 未找到相关记忆")
-                return json.dumps({
-                    "success": True,
-                    "memories": [],
-                    "message": "未找到相关记忆"
-                }, ensure_ascii=False)
+            if not records:
+                return json.dumps({"success": True, "memories": [], "message": "未找到相关记忆"}, ensure_ascii=False)
 
             memories = [
-                {
-                    "content": m["memory"],
-                    "id": m.get("id", ""),
-                    "created_at": m.get("created_at", "")
-                }
-                for m in results["results"]
+                {"content": r.content, "id": r.id or "", "created_at": ""}
+                for r in records
             ]
-
-            print(f"[Mem0Tools] 找到 {len(memories)} 条相关记忆")
-
-            # 返回格式化的记忆列表
             memory_list = "\n".join([f"• {m['content']}" for m in memories])
 
-            return json.dumps({
-                "success": True,
-                "memories": memories,
-                "formatted_memories": memory_list,
-                "count": len(memories)
-            }, ensure_ascii=False)
-
+            return json.dumps(
+                {"success": True, "memories": memories, "formatted_memories": memory_list, "count": len(memories)},
+                ensure_ascii=False,
+            )
         except Exception as e:
-            print(f"[Mem0Tools] 搜索记忆失败: {e}")
-            return json.dumps({
-                "success": False,
-                "error": f"搜索失败: {str(e)}"
-            })
+            return json.dumps({"success": False, "error": f"搜索失败: {str(e)}"})
 
 
 def create_memory_tools(mem0_manager, user_id: str = "default") -> Optional[Mem0Tools]:

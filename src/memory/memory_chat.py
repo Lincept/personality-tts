@@ -15,6 +15,9 @@ from typing import Optional, List, Dict, Any, Generator
 from dataclasses import dataclass, field
 from openai import OpenAI
 
+from .store import MemoryStore
+from .factory import create_memory_store
+
 # 配置日志
 logger = logging.getLogger("memory_chat")
 
@@ -154,6 +157,7 @@ class MemoryEnhancedChat:
         base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
         model: str = "qwen3-max",
         mem0_manager = None,
+        memory_store: Optional[MemoryStore] = None,
         user_id: str = "default_user",
         role_description: str = "你是一个友好的 AI 助手",
         verbose: bool = False
@@ -165,14 +169,16 @@ class MemoryEnhancedChat:
             api_key: API Key
             base_url: API Base URL
             model: 模型名称（需要支持 JSON Object 模式）
-            mem0_manager: Mem0Manager 实例
+            mem0_manager: 历史参数（Mem0Manager 实例），建议改用 memory_store
+            memory_store: 通用 MemoryStore（推荐）
             user_id: 用户 ID
             role_description: 角色描述
             verbose: 是否输出详细日志到控制台
         """
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
-        self.mem0 = mem0_manager
+        # 兼容：优先使用 memory_store，其次使用旧的 mem0_manager
+        self.memory_store: Optional[MemoryStore] = memory_store or mem0_manager
         self.user_id = user_id
         self.role_description = role_description
         self.verbose = verbose
@@ -450,22 +456,15 @@ class MemoryEnhancedChat:
 
     def _search_memories(self, query: str) -> str:
         """检索记忆"""
-        if not self.mem0 or not self.mem0.enabled:
+        if not self.memory_store or not getattr(self.memory_store, "enabled", False):
             return ""
 
         try:
-            results = self.mem0.memory.search(
-                query=query,
-                user_id=self.user_id,
-                limit=5
-            )
-
-            if not results.get("results"):
+            records = self.memory_store.search(query=query, user_id=self.user_id, limit=5)
+            if not records:
                 logger.info(f"[检索] 未找到相关记忆")
                 return ""
-
-            memories = [f"• {r['memory']}" for r in results["results"]]
-            return "\n".join(memories)
+            return "\n".join([f"• {r.content}" for r in records])
 
         except Exception as e:
             logger.error(f"[检索错误] {e}")
@@ -477,7 +476,7 @@ class MemoryEnhancedChat:
 
         保存记忆到 Mem0，结果写入日志
         """
-        if not self.mem0 or not self.mem0.enabled:
+        if not self.memory_store or not getattr(self.memory_store, "enabled", False):
             logger.warning("[存储] Mem0 未启用")
             return
 
@@ -485,21 +484,15 @@ class MemoryEnhancedChat:
             return
 
         try:
-            # 格式化记忆内容
-            memory_content = f"User memory - {memory_item.content}"
-
-            # 调用 mem0 保存（不传 enable_graph，由 Mem0Manager 配置决定）
-            result = self.mem0.memory.add(
-                memory_content,
-                user_id=self.user_id
+            # 交给后端决定如何落盘/是否启用图谱
+            self.memory_store.save(
+                memory_item.content,
+                user_id=self.user_id,
+                kind=memory_item.type,
             )
-
-            # 强制刷新到磁盘
-            self.mem0._flush_to_disk()
 
             # 结果写入日志
             logger.info(f"[存储成功] type={memory_item.type}, content={memory_item.content}")
-            logger.debug(f"[存储详情] {result}")
 
             if self.verbose:
                 print(f"[存储] type={memory_item.type}, content={memory_item.content}")
@@ -528,16 +521,12 @@ def create_memory_chat(
     Returns:
         MemoryEnhancedChat 实例
     """
-    from .mem0_manager import Mem0Manager
-
     # 获取 LLM 配置
     llm_config = config.get("openai_compatible", {})
 
     # 获取 Mem0 配置
     mem0_config = config.get("mem0", {})
-    mem0_manager = None
-    if mem0_config.get("enable_mem0", False):
-        mem0_manager = Mem0Manager(mem0_config)
+    memory_store = create_memory_store(mem0_config)
 
     # 获取用户 ID
     user_id = mem0_config.get("user_id", "default_user")
@@ -546,7 +535,7 @@ def create_memory_chat(
         api_key=llm_config.get("api_key"),
         base_url=llm_config.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         model=llm_config.get("model", "qwen3-max"),
-        mem0_manager=mem0_manager,
+        memory_store=memory_store,
         user_id=user_id,
         role_description=role_description,
         verbose=verbose

@@ -1,26 +1,39 @@
+"""语音助手 Prompt 管理系统。
+
+说明：长期记忆能力通过 MemoryStore 抽象注入（可替换 mem0/langchain/自研）。
 """
-语音助手 Prompt 管理系统
-包括角色设定、用户信息、知识库、对话历史管理
-"""
+
+from __future__ import annotations
+
 from typing import List, Dict, Optional
 from datetime import datetime
+
+from src.memory.store import MemoryStore
 
 
 class VoiceAssistantPrompt:
     """语音助手 Prompt 管理器"""
 
-    def __init__(self, role: str = "default", role_config: Optional[Dict] = None, mem0_manager=None):
+    def __init__(
+        self,
+        role: str = "default",
+        role_config: Optional[Dict] = None,
+        mem0_manager=None,
+        memory_store: Optional[MemoryStore] = None,
+    ):
         """
         初始化 Prompt 管理器
 
         Args:
             role: 角色类型 (default/casual/professional/companion)
             role_config: 自定义角色配置（从 role_loader 加载）
-            mem0_manager: Mem0 记忆管理器（可选）
+            mem0_manager: 历史参数（兼容），建议改用 memory_store
+            memory_store: 通用 MemoryStore（可选）
         """
         self.role = role
         self.custom_role_config = role_config  # 保存自定义角色配置
-        self.mem0_manager = mem0_manager  # Mem0 记忆管理器
+        # 兼容：优先使用 memory_store，其次使用旧的 mem0_manager
+        self.memory_store = memory_store or mem0_manager
         self.system_prompt = self._build_system_prompt()
         self.user_info = {}
         self.knowledge_base = []
@@ -224,17 +237,15 @@ class VoiceAssistantPrompt:
         system_prompt = system_prompt.replace("{{user_info}}", user_info_str)
         system_prompt = system_prompt.replace("{{knowledge_base}}", knowledge_str)
 
-        # 自动检索相关记忆（如果启用了 Mem0）
-        if user_id and self.mem0_manager and self.mem0_manager.enabled:
-            relevant_memories = self.mem0_manager.search_memories(
-                query=user_input,
-                user_id=user_id,
-                limit=5
-            )
-
-            if relevant_memories:
-                # 将记忆添加到系统提示
-                system_prompt += f"\n\n【相关记忆】\n{relevant_memories}"
+        # 自动检索相关记忆（如果启用了长期记忆后端）
+        if user_id and self.memory_store and getattr(self.memory_store, "enabled", False):
+            try:
+                records = self.memory_store.search(query=user_input, user_id=user_id, limit=5)
+                if records:
+                    relevant_memories = "\n".join([f"- {r.content}" for r in records])
+                    system_prompt += f"\n\n【相关记忆】\n{relevant_memories}"
+            except Exception:
+                pass
 
         # 构建消息列表
         messages = [

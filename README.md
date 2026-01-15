@@ -92,6 +92,7 @@ OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 OPENAI_MODEL=qwen-plus
 
 # Mem0 记忆管理
+MEMORY_BACKEND=mem0  # mem0 / none（未来可扩展其它后端）
 ENABLE_MEM0=true
 MEM0_USER_ID=your_user_id
 ```
@@ -360,6 +361,11 @@ OPENAI_MODEL=gpt-4
 ### Mem0 配置
 
 ```bash
+# 记忆后端选择（可选）
+# - mem0：使用 mem0ai + Qdrant（本仓库内置）
+# - none：关闭长期记忆（即使 ENABLE_MEM0=true 也会关闭）
+MEMORY_BACKEND=mem0
+
 # 启用 Mem0（可选）
 ENABLE_MEM0=true
 

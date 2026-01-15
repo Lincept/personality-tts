@@ -1,8 +1,16 @@
+"""Mem0 记忆管理器（实现 MemoryStore 接口）。
+
+说明：
+- 业务层应优先依赖 src.memory.store.MemoryStore 抽象接口。
+- 本类保留历史 API（search_memories/get_all_memories/clear_memories 等）以兼容旧调用。
 """
-Mem0 记忆管理器 - 为语音助手提供长期记忆能力
-"""
-from typing import List, Dict, Optional
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
 import os
+
+from .store import MemoryRecord
 
 
 class Mem0Manager:
@@ -27,7 +35,6 @@ class Mem0Manager:
         self.enable_graph = config.get("enable_graph", False)
 
         if not self.enabled:
-            print("Mem0 未启用")
             return
 
         try:
@@ -90,6 +97,80 @@ class Mem0Manager:
             print(f"⚠️  Mem0 初始化失败: {e}")
             self.enabled = False
 
+    def __bool__(self) -> bool:
+        # 兼容旧代码：if self.mem0_manager and self.mem0_manager.enabled
+        return bool(self.enabled)
+
+    @property
+    def supports_relationships(self) -> bool:
+        return bool(self.enabled and self.enable_graph)
+
+    def search(self, query: str, user_id: str, limit: int = 5) -> List[MemoryRecord]:
+        """通用检索接口：返回结构化结果，不在这里做展示格式化。"""
+        if not self.enabled:
+            return []
+
+        try:
+            results = self.memory.search(query=query, user_id=user_id, limit=limit)
+            items = results.get("results") or []
+            records: List[MemoryRecord] = []
+            for item in items:
+                content = item.get("memory")
+                if not content:
+                    continue
+                records.append(
+                    MemoryRecord(
+                        content=str(content),
+                        id=item.get("id"),
+                        metadata=item.get("metadata") if isinstance(item.get("metadata"), dict) else None,
+                    )
+                )
+            return records
+        except Exception:
+            return []
+
+    def save(
+        self,
+        memory: str,
+        user_id: str,
+        *,
+        kind: str = "fact",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """通用保存接口。
+
+        - kind=relationship 且 enable_graph=True 时，尝试启用图谱抽取。
+        - 对外不抛异常，避免影响主对话链路。
+        """
+        if not self.enabled:
+            return
+
+        memory = (memory or "").strip()
+        if not memory:
+            return
+
+        try:
+            # 统一前缀，减少重复/不一致
+            if memory.startswith("User memory - "):
+                memory_content = memory
+            else:
+                memory_content = f"User memory - {memory}"
+
+            # 尽量兼容不同版本 mem0 的 add() 参数
+            add_kwargs: Dict[str, Any] = {"user_id": user_id}
+
+            # relationship 只有在启用图谱时才尝试开启；否则显式关闭以减少噪声
+            if self.enable_graph:
+                add_kwargs["enable_graph"] = bool(kind == "relationship")
+
+            if metadata is not None:
+                add_kwargs["metadata"] = metadata
+
+            self.memory.add(memory_content, **add_kwargs)
+            self._flush_to_disk()
+        except Exception:
+            return
+
     def search_memories(self, query: str, user_id: str, limit: int = 5) -> str:
         """
         检索相关记忆
@@ -105,27 +186,10 @@ class Mem0Manager:
         if not self.enabled:
             return ""
 
-        try:
-            print(f"[Mem0] 检索记忆 - user_id: {user_id}, query: {query[:50]}...")
-            results = self.memory.search(
-                query=query,
-                user_id=user_id,
-                limit=limit
-            )
-
-            if not results.get("results"):
-                print(f"[Mem0] 未找到相关记忆")
-                return ""
-
-            memories = [m["memory"] for m in results["results"]]
-            print(f"[Mem0] 找到 {len(memories)} 条相关记忆")
-            return "\n".join(f"- {m}" for m in memories)
-
-        except Exception as e:
-            print(f"⚠️  记忆检索失败: {e}")
-            import traceback
-            traceback.print_exc()
+        records = self.search(query=query, user_id=user_id, limit=limit)
+        if not records:
             return ""
+        return "\n".join(f"- {r.content}" for r in records)
 
     def add_conversation(self, user_input: str, assistant_response: str, user_id: str):
         """
@@ -140,17 +204,13 @@ class Mem0Manager:
             return
 
         try:
-            print(f"[Mem0] 保存对话 - user_id: {user_id}")
-            print(f"[Mem0] 用户: {user_input[:50]}...")
-            print(f"[Mem0] 助手: {assistant_response[:50]}...")
-
             messages = [
                 {"role": "user", "content": user_input},
                 {"role": "assistant", "content": assistant_response}
             ]
 
-            result = self.memory.add(messages, user_id=user_id)
-            print(f"[Mem0] 保存成功，结果: {result}")
+            # 对话消息形式交给 mem0 自己做提取
+            self.memory.add(messages, user_id=user_id)
 
             # 强制刷新缓存到磁盘（确保数据持久化）
             self._flush_to_disk()
@@ -182,7 +242,7 @@ class Mem0Manager:
             # 静默失败，不影响主流程
             pass
 
-    def get_all_memories(self, user_id: str) -> List[Dict]:
+    def get_all(self, user_id: str) -> List[Dict[str, Any]]:
         """
         获取用户所有记忆
 
@@ -202,7 +262,11 @@ class Mem0Manager:
             print(f"⚠️  获取记忆失败: {e}")
             return []
 
-    def clear_memories(self, user_id: str):
+    def get_all_memories(self, user_id: str) -> List[Dict]:
+        # 兼容旧 API
+        return self.get_all(user_id=user_id)
+
+    def clear(self, user_id: str) -> None:
         """
         清除用户所有记忆
 
@@ -213,12 +277,16 @@ class Mem0Manager:
             return
 
         try:
-            memories = self.get_all_memories(user_id)
+            memories = self.get_all(user_id)
             for mem in memories:
                 self.memory.delete(memory_id=mem["id"])
             print(f"✓ 已清除用户 {user_id} 的所有记忆")
         except Exception as e:
             print(f"⚠️  清除记忆失败: {e}")
+
+    def clear_memories(self, user_id: str):
+        # 兼容旧 API
+        return self.clear(user_id=user_id)
 
     def close(self):
         """
