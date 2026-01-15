@@ -115,6 +115,7 @@ class VoiceInteractiveMode:
         self.current_player = None    # 当前正在播放的 player
         self.current_tts_thread = None  # 当前 TTS 线程
         self.last_sentence_time = 0  # 上次触发对话的时间（防止太快重复触发）
+        self.should_exit = False  # 退出标志
 
     def on_asr_text(self, text: str):
         """ASR 中间结果回调"""
@@ -130,6 +131,15 @@ class VoiceInteractiveMode:
         """ASR 完整句子回调"""
         # 过滤空文本和太短的文本（避免噪音触发）
         if not text or not text.strip() or len(text.strip()) < 2:
+            return
+
+        # 检查退出命令
+        exit_keywords = ['退出', '再见', '拜拜', '结束对话', '关闭程序']
+        if any(keyword in text.strip() for keyword in exit_keywords):
+            print(f'\n\n👋 检测到退出命令: "{text}"')
+            print('正在退出程序...')
+            # 设置退出标志
+            self.should_exit = True
             return
 
         # 如果 AI 正在说话，检查是否是真实打断
@@ -175,7 +185,7 @@ class VoiceInteractiveMode:
         self.current_tts_thread = tts_thread
 
     def _process_and_speak(self, text: str):
-        """在单独线程中处理 LLM + TTS"""
+        """在单独线程中处理 LLM + TTS（使用两阶段结构化输出记忆方案）"""
         try:
             # 发送给 LLM 并播放回复
             self.is_tts_playing = True
@@ -183,15 +193,16 @@ class VoiceInteractiveMode:
             # 启动打断监听（在 TTS 播放时）
             self.interrupt_controller.set_tts_speaking(True)
 
-            # 获取 LLM 消息
-            messages = self.llm_tts.voice_prompt.get_messages(text, user_id=self.llm_tts.user_id)
+            # 获取对话历史
+            history = []
+            for msg in self.llm_tts.voice_prompt.conversation_history:
+                history.append(msg)
 
             # 复用全局 TTS 客户端（不再每次创建新的）
             from src.audio.pyaudio_player import PyAudioStreamPlayer
             from src.realtime_pipeline import RealtimeStreamingPipeline
 
             # 创建流式播放器（每次创建新的，避免状态冲突）
-            # 注意：使用聚合设备时，参考信号通过 BlackHole 自动捕获，无需回调
             streaming_player = PyAudioStreamPlayer(
                 sample_rate=24000
             )
@@ -203,15 +214,15 @@ class VoiceInteractiveMode:
             self.current_pipeline = pipeline
             self.current_player = streaming_player
 
-            # 获取 LLM 流式输出
-            llm_stream = self.llm_tts.llm_client.chat_stream(
-                messages=messages,
-                temperature=self.llm_tts.test_config["llm_config"]["temperature"]
-            )
+            # 使用 MemoryEnhancedChat 的流式输出（两阶段记忆管理）
+            def llm_stream_generator():
+                """将 MemoryEnhancedChat.chat_stream 转换为 pipeline 需要的格式"""
+                for chunk in self.llm_tts.memory_chat.chat_stream(text, history):
+                    yield chunk
 
             # 运行实时管道（复用全局 TTS 客户端）
             result = pipeline.run(
-                llm_stream=llm_stream,
+                llm_stream=llm_stream_generator(),
                 realtime_tts_client=self.realtime_tts,
                 streaming_player=streaming_player,
                 display_text=True
@@ -221,14 +232,6 @@ class VoiceInteractiveMode:
             if result and result.get("text"):
                 self.llm_tts.voice_prompt.add_conversation('user', text)
                 self.llm_tts.voice_prompt.add_conversation('assistant', result["text"])
-
-                # 保存到 Mem0（即使被打断也要保存，因为可能包含重要信息）
-                if self.llm_tts.mem0_manager:
-                    self.llm_tts.mem0_manager.add_conversation(
-                        user_input=text,
-                        assistant_response=result["text"],
-                        user_id=self.llm_tts.user_id
-                    )
 
         except Exception as e:
             print(f'\n❌ 错误: {e}')
@@ -269,7 +272,11 @@ class VoiceInteractiveMode:
         if self.enable_aec:
             print('🎛️  AEC 回声消除已启用')
         print('━' * 50)
-        print('按 Ctrl+C 退出\n')
+        print('💡 退出方式：')
+        print('   1. 说"退出"、"再见"、"拜拜"等退出命令')
+        print('   2. 按 Ctrl+C 强制退出')
+        print('━' * 50)
+        print()
 
         try:
             # 启动音频输入（先启动，确保麦克风打开）
@@ -296,9 +303,12 @@ class VoiceInteractiveMode:
             self.is_listening = True
             print('🎤 请说话...\n')
 
-            # 持续运行
-            while True:
+            # 持续运行，检查退出标志
+            while not self.should_exit:
                 time.sleep(0.1)
+
+            # 正常退出
+            print('\n👋 再见!')
 
         except KeyboardInterrupt:
             print('\n\n👋 再见!')
@@ -317,6 +327,10 @@ class VoiceInteractiveMode:
             # 断开 TTS 连接（复用的全局客户端）
             if hasattr(self, 'realtime_tts'):
                 self.realtime_tts.disconnect()
+
+            # 关闭 Mem0 连接，确保数据持久化
+            if self.llm_tts.mem0_manager:
+                self.llm_tts.mem0_manager.close()
 
 
 def main():

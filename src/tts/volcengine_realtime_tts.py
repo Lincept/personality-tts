@@ -11,6 +11,11 @@ import queue
 import time
 import sys
 import os
+import logging
+
+# 设置 websockets 库的日志级别为 WARNING，避免打印正常的关闭信息
+# 这些信息（如 "websocket closed due to fin=1 opcode=8"）会干扰 LLM 的输出
+logging.getLogger("websockets").setLevel(logging.WARNING)
 
 sys.path.append("src/tts/protocols")
 

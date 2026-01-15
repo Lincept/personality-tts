@@ -4,6 +4,7 @@
 import os
 import json
 from typing import Dict, Any
+from dotenv import load_dotenv
 
 
 class ConfigLoader:
@@ -13,71 +14,29 @@ class ConfigLoader:
 
     def _load_config(self):
         """加载配置,优先使用 .env 文件"""
-        # 尝试从 .env 文件加载
-        env_file = ".env"
-        if os.path.exists(env_file):
-            self._load_from_env(env_file)
+        # 加载 .env 文件到环境变量
+        load_dotenv()
 
-        # 如果 .env 中没有配置,则从 JSON 文件加载
-        if not self.config:
-            json_file = "config/api_keys.json"
-            if os.path.exists(json_file):
-                self._load_from_json(json_file)
+        # 尝试从 JSON 文件加载基础配置
+        json_file = "config/api_keys.json"
+        if os.path.exists(json_file):
+            with open(json_file, 'r', encoding='utf-8') as f:
+                self.config = json.load(f)
 
-    def _load_from_env(self, env_file: str):
-        """从 .env 文件加载配置"""
-        with open(env_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                # 跳过注释和空行
-                if not line or line.startswith('#'):
-                    continue
+        # 从环境变量覆盖 mem0 配置
+        if "mem0" in self.config:
+            # 从 .env 读取配置，覆盖 JSON 中的值
+            self.config["mem0"]["enable_mem0"] = os.getenv("ENABLE_MEM0", str(self.config["mem0"].get("enable_mem0", "true"))).lower() == "true"
+            self.config["mem0"]["enable_graph"] = os.getenv("ENABLE_GRAPH", str(self.config["mem0"].get("enable_graph", "false"))).lower() == "true"
+            self.config["mem0"]["user_id"] = os.getenv("DEFAULT_USER_ID", self.config["mem0"].get("user_id", "default_user"))
 
-                # 解析键值对
-                if '=' in line:
-                    key, value = line.split('=', 1)
-                    key = key.strip()
-                    value = value.strip()
-
-                    # 跳过占位符
-                    if value and not value.startswith('your_'):
-                        os.environ[key] = value
-
-        # 构建配置字典
-        self.config = {
-            "qwen3_tts": {
-                "api_key": os.getenv("QWEN3_API_KEY", ""),
-                "base_url": "https://dashscope.aliyuncs.com/api/v1"
-            },
-            "volcengine_seed2": {
-                "app_id": os.getenv("VOLCENGINE_APP_ID", ""),
-                "api_key": os.getenv("VOLCENGINE_API_KEY", ""),
-                "access_token": os.getenv("VOLCENGINE_ACCESS_TOKEN", ""),  # 兼容旧配置
-                "base_url": "https://openspeech.bytedance.com/api/v1"
-            },
-            "minimax": {
-                "api_key": os.getenv("MINIMAX_API_KEY", ""),
-                "group_id": os.getenv("MINIMAX_GROUP_ID", ""),
-                "base_url": "https://api.minimax.chat/v1"
-            },
-            "openai_compatible": {
-                "api_key": os.getenv("OPENAI_API_KEY", ""),
-                "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-                "model": os.getenv("OPENAI_MODEL", "gpt-4")
-            },
-            "mem0": {
-                "enable_mem0": os.getenv("ENABLE_MEM0", "false").lower() == "true",
-                "llm_api_key": os.getenv("MEM0_LLM_API_KEY", os.getenv("OPENAI_API_KEY", "")),
-                "llm_base_url": os.getenv("MEM0_LLM_BASE_URL", os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")),
-                "llm_model": os.getenv("MEM0_LLM_MODEL", "gpt-4o-mini"),
-                "user_id": os.getenv("MEM0_USER_ID", "default_user")
-            }
-        }
-
-    def _load_from_json(self, json_file: str):
-        """从 JSON 文件加载配置"""
-        with open(json_file, 'r', encoding='utf-8') as f:
-            self.config = json.load(f)
+            # Neo4j 配置
+            if os.getenv("NEO4J_URL"):
+                self.config["mem0"]["neo4j_url"] = os.getenv("NEO4J_URL")
+            if os.getenv("NEO4J_USERNAME"):
+                self.config["mem0"]["neo4j_username"] = os.getenv("NEO4J_USERNAME")
+            if os.getenv("NEO4J_PASSWORD"):
+                self.config["mem0"]["neo4j_password"] = os.getenv("NEO4J_PASSWORD")
 
     def get_config(self) -> Dict[str, Any]:
         """获取配置"""
@@ -119,10 +78,16 @@ class ConfigLoader:
 
         print("\n✓ 配置加载完成")
 
-        # 只显示 Mem0 状态
+        # 显示 Mem0 状态
         mem0_config = self.config.get("mem0", {})
         mem0_enabled = mem0_config.get("enable_mem0", False)
+        graph_enabled = mem0_config.get("enable_graph", False)
+
         if mem0_enabled:
             print(f"✓ Mem0 记忆已启用")
+            if graph_enabled:
+                print(f"✓ 知识图谱已启用")
+            else:
+                print(f"  知识图谱未启用（仅向量存储）")
 
         return validation

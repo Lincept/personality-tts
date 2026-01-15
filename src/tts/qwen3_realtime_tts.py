@@ -18,25 +18,29 @@ from dashscope.audio.qwen_tts_realtime import (
 class RealtimeTTSCallback(QwenTtsRealtimeCallback):
     """实时 TTS 回调处理器"""
 
-    def __init__(self, audio_queue: queue.Queue):
+    def __init__(self, audio_queue: queue.Queue, verbose: bool = False):
         """
         Args:
             audio_queue: 音频数据队列，用于传递给播放器
+            verbose: 是否显示详细日志
         """
         self.audio_queue = audio_queue
         self.complete_event = threading.Event()
         self.session_id = None
         self.first_audio_received = False
         self.start_time = None
+        self.verbose = verbose
 
     def on_open(self) -> None:
         """连接建立"""
-        print('[实时TTS] WebSocket 连接已建立')
+        if self.verbose:
+            print('[实时TTS] WebSocket 连接已建立')
         self.start_time = time.time()
 
     def on_close(self, close_status_code, close_msg) -> None:
         """连接关闭"""
-        print(f'[实时TTS] 连接关闭: code={close_status_code}, msg={close_msg}')
+        if self.verbose:
+            print(f'[实时TTS] 连接关闭: code={close_status_code}, msg={close_msg}')
         self.audio_queue.put(None)  # 结束信号
 
     def on_event(self, response: dict) -> None:
@@ -46,7 +50,8 @@ class RealtimeTTSCallback(QwenTtsRealtimeCallback):
 
             if event_type == 'session.created':
                 self.session_id = response['session']['id']
-                print(f'[实时TTS] 会话创建: {self.session_id}')
+                if self.verbose:
+                    print(f'[实时TTS] 会话创建: {self.session_id}')
 
             elif event_type == 'response.audio.delta':
                 # 接收音频数据块
@@ -57,15 +62,18 @@ class RealtimeTTSCallback(QwenTtsRealtimeCallback):
 
                     if not self.first_audio_received:
                         self.first_audio_received = True
-                        delay = time.time() - self.start_time
-                        print(f'[实时TTS] 首个音频块延迟: {delay:.3f}秒')
+                        if self.verbose:
+                            delay = time.time() - self.start_time
+                            print(f'[实时TTS] 首个音频块延迟: {delay:.3f}秒')
 
             elif event_type == 'response.done':
-                response_id = response.get('response', {}).get('id', 'unknown')
-                print(f'[实时TTS] 响应完成: {response_id}')
+                if self.verbose:
+                    response_id = response.get('response', {}).get('id', 'unknown')
+                    print(f'[实时TTS] 响应完成: {response_id}')
 
             elif event_type == 'session.finished':
-                print('[实时TTS] 会话结束')
+                if self.verbose:
+                    print('[实时TTS] 会话结束')
                 self.complete_event.set()
 
             elif event_type == 'error':
@@ -73,7 +81,8 @@ class RealtimeTTSCallback(QwenTtsRealtimeCallback):
                 print(f'[实时TTS] 错误: {error}')
 
         except Exception as e:
-            print(f'[实时TTS] 事件处理错误: {e}')
+            if self.verbose:
+                print(f'[实时TTS] 事件处理错误: {e}')
 
     def wait_for_finished(self, timeout=None):
         """等待会话完成"""
@@ -84,7 +93,7 @@ class Qwen3RealtimeTTS:
     """Qwen3 实时 TTS 客户端"""
 
     def __init__(self, api_key: str, voice: str = "Cherry",
-                 region: str = "beijing"):
+                 region: str = "beijing", verbose: bool = False):
         """
         初始化实时 TTS 客户端
 
@@ -92,10 +101,12 @@ class Qwen3RealtimeTTS:
             api_key: DashScope API Key
             voice: 语音名称
             region: 地域 (beijing 或 singapore)
+            verbose: 是否显示详细日志
         """
         self.api_key = api_key
         self.voice = voice
         self.region = region
+        self.verbose = verbose
 
         # 设置 API Key
         dashscope.api_key = api_key
@@ -127,7 +138,7 @@ class Qwen3RealtimeTTS:
         self.audio_queue = queue.Queue()
 
         # 创建回调
-        callback = RealtimeTTSCallback(self.audio_queue)
+        callback = RealtimeTTSCallback(self.audio_queue, verbose=self.verbose)
 
         # 创建客户端
         self.client = QwenTtsRealtime(
@@ -160,7 +171,8 @@ class Qwen3RealtimeTTS:
             mode=mode
         )
 
-        print(f'[实时TTS] 会话已启动: voice={self.voice}, mode={mode}')
+        if self.verbose:
+            print(f'[实时TTS] 会话已启动: voice={self.voice}, mode={mode}')
 
         return self.audio_queue
 
@@ -173,7 +185,8 @@ class Qwen3RealtimeTTS:
         """
         if self.client:
             self.client.append_text(text)
-            print(f'[实时TTS] 发送文本: {text[:50]}...')
+            if self.verbose:
+                print(f'[实时TTS] 发送文本: {text[:50]}...')
         else:
             raise RuntimeError("会话未启动，请先调用 start_session()")
 
@@ -181,7 +194,8 @@ class Qwen3RealtimeTTS:
         """结束会话"""
         if self.client:
             self.client.finish()
-            print('[实时TTS] 会话结束信号已发送')
+            if self.verbose:
+                print('[实时TTS] 会话结束信号已发送')
 
     def wait_for_completion(self, timeout=None):
         """等待会话完成"""
