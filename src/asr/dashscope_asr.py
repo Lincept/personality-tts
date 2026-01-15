@@ -130,8 +130,20 @@ class DashScopeASR:
         )
 
         # 启动识别
-        self.recognition.start()
-        self.is_running = True
+        try:
+            self.recognition.start()
+            self.is_running = True
+        except Exception as e:
+            self.is_running = False
+            err = str(e)
+            if '401' in err or 'Unauthorized' in err or 'unauthorized' in err:
+                print('❌ ASR 鉴权失败（HTTP 401）')
+                print('   - 请确认使用的是 DashScope 的 API Key（不是 OpenAI Key）')
+                print('   - .env 可设置 QWEN3_API_KEY 或 DASHSCOPE_API_KEY')
+                print('   - 也可能是 ASR 模型无权限，可尝试 --asr-model fun-asr-realtime-2025-11-07')
+            else:
+                print(f'❌ ASR 启动失败: {e}')
+            raise
         # print(f'[ASR] 已启动: model={self.model}, sample_rate={sample_rate}Hz')  # 静默
         # if disfluency_removal_enabled:
         #     print('[ASR] 已启用语气词过滤')  # 静默

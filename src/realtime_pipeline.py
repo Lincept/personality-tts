@@ -101,6 +101,8 @@ class RealtimeStreamingPipeline:
 
         # 注意：不再自动断开连接，复用全局 TTS 客户端
 
+        print()
+
         return {
             "text": "".join(full_text),
             "metrics": metrics
