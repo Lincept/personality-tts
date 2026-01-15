@@ -27,11 +27,12 @@
 ```
 personality-tts/
 ├── src/
-│   ├── asr/                    # 语音识别模块（新增）
+│   ├── asr/                    # 语音识别模块
 │   │   ├── dashscope_asr.py    # DashScope ASR 客户端
 │   │   ├── audio_input.py      # 麦克风音频输入
-│   │   └── interrupt_controller.py # 语音打断控制器
-│   ├── memory/                 # 记忆模块（新增）
+│   │   ├── interrupt_controller.py # 语音打断控制器
+│   │   └── aec_processor.py   # AEC 回声消除处理器
+│   ├── memory/                 # 记忆模块
 │   │   └── mem0_manager.py     # Mem0 记忆管理器
 │   ├── audio/                  # 音频播放模块
 │   │   ├── player.py           # 基础播放器
@@ -45,9 +46,7 @@ personality-tts/
 │   ├── streaming_pipeline.py   # 流式处理管道
 │   ├── realtime_pipeline.py    # 实时处理管道
 │   ├── voice_assistant_prompt.py # Prompt 管理系统
-│   └── main.py                 # 主程序
-├── text_to_speech.py           # 文字对话模式入口
-├── voice_to_voice.py           # 语音对话模式入口
+│   └── main.py                 # 主程序（统一入口）
 ├── .env                        # 环境变量配置
 └── README.md                   # 本文件
 ```
@@ -97,12 +96,73 @@ ENABLE_MEM0=true
 MEM0_USER_ID=your_user_id
 ```
 
+### 4. 命令行参数说明
+
+#### Python 模块运行参数 `-m`
+
+**作用**：将 Python 文件作为模块来运行
+
+**推荐使用 `-m` 的原因**：
+- ✅ 模块导入更可靠
+- ✅ 符合 Python 最佳实践
+- ✅ 更好地处理模块导入路径
+
+**对比**：
+```bash
+# 方式 1：直接运行（不推荐）
+python3 src/main.py --role natural
+
+# 方式 2：使用 -m 参数（推荐）
+python3 -m src.main --role natural
+```
+
+#### 角色参数 `--role`
+
+**作用**：指定 AI 助手的个性、说话风格和行为特征
+
+**不加 `--role` 的效果**：
+- 📋 会显示角色选择菜单
+- 🎯 需要交互式选择角色
+- 🔄 每次启动都需要选择
+
+**加 `--role` 的效果**：
+- ✅ 直接使用指定的角色
+- ✅ 快速启动，无需选择
+- ✅ 适合已确定角色的场景
+
+#### 可用角色列表
+
+📖 **详细角色说明**：[docs/roles.md](docs/roles.md) - 查看所有角色的详细说明和使用示例
+
 ### 4. 运行
+
+📖 **快速开始指南**：[docs/快速开始.md](docs/快速开始.md) - 30 秒快速上手！
+
+所有功能通过统一的入口 `src/main.py` 运行，使用命令行参数控制模式。
+
+#### 查看帮助
+
+```bash
+python3 -m src.main --help
+```
 
 #### 模式 1: 文字对话（你打字，AI 说话）
 
 ```bash
-python text_to_speech.py
+# 默认模式（会提示选择角色）
+python3 -m src.main
+
+# 指定角色 - 自然助手
+python3 -m src.main --role natural
+
+# 指定角色 - 学姐助手
+python3 -m src.main --role xuejie
+
+# 指定角色 - 幽默助手
+python3 -m src.main --role funny
+
+# 显式指定文字模式
+python3 -m src.main --text
 ```
 
 功能：
@@ -114,10 +174,25 @@ python text_to_speech.py
 
 ```bash
 # 推荐方式：禁用 AEC + 使用耳机（最稳定）
-python voice_to_voice.py --no-aec
+python3 -m src.main --voice --no-aec
 
-# 实验性：启用 AEC（可能不稳定）
-python voice_to_voice.py
+# 指定角色 - 学姐助手 + 耳机模式
+python3 -m src.main --voice --no-aec --role xuejie
+
+# 指定角色 - 自然助手 + 耳机模式
+python3 -m src.main --voice --no-aec --role natural
+
+# 实验性：启用 AEC（需要聚合设备）
+python3 -m src.main --voice --device-index <聚合设备索引>
+
+# 指定 ASR 模型 - Paraformer v2（默认）
+python3 -m src.main --voice --no-aec --asr-model paraformer-realtime-v2
+
+# 指定 ASR 模型 - FunASR 2025
+python3 -m src.main --voice --no-aec --asr-model fun-asr-realtime-2025-11-07
+
+# 组合使用：AEC + 指定角色 + 指定 ASR 模型
+python3 -m src.main --voice --device-index <索引> --role xuejie --asr-model paraformer-realtime-v2
 ```
 
 功能：
@@ -131,6 +206,16 @@ python voice_to_voice.py
 - macOS 需要在"系统设置 → 隐私与安全性 → 麦克风"中授权
 - AEC 功能已优化，参考 py-xiaozhi 实现
 - 详细 AEC 设置指南：[AEC_SETUP_GUIDE.md](AEC_SETUP_GUIDE.md)
+
+#### 工具命令
+
+```bash
+# 列出所有音频设备
+python3 -m src.main --list-devices
+
+# 检查 ASR 鉴权
+python3 -m src.main --check-asr
+```
 
 ## 📝 使用说明
 
@@ -151,19 +236,6 @@ python voice_to_voice.py
 /info              - 查看当前配置
 ```
 
-### 可用角色
-
-- `default` - 默认助手（友好、专业）
-- `casual` - 轻松助手（随意、幽默）
-- `professional` - 专业助手（正式、严谨）
-- `companion` - 陪伴助手（温暖、关怀）
-- `funny` - 幽默助手（搞笑、活泼）
-
-切换角色：
-```
-/role casual
-```
-
 ### 语音对话模式
 
 1. 启动程序后，等待提示 `[等待你说话...]`
@@ -171,6 +243,18 @@ python voice_to_voice.py
 3. AI 会自动识别并回复
 4. 在 AI 说话时，你可以直接开始说话打断它
 5. 按 `Ctrl+C` 退出
+
+### 退出命令
+
+在语音对话模式中，可以通过以下命令退出：
+
+```
+退出
+再见
+拜拜
+结束对话
+关闭程序
+```
 
 ## 🧠 长期记忆功能
 
@@ -189,9 +273,7 @@ python voice_to_voice.py
 /clearmem
 ```
 
-## 🎯 新增功能说明
-
-相比原始版本，本项目新增了以下功能：
+## 🎯 功能说明
 
 ### 1. 语音识别模块（ASR）
 - **位置**：`src/asr/`
@@ -213,7 +295,7 @@ python voice_to_voice.py
 - **文件**：
   - `mem0_manager.py` - Mem0 管理器
 
-### 3. AEC 回声消除（新增）
+### 3. AEC 回声消除
 - **位置**：`src/asr/aec_processor.py`, `src/webrtc_apm/`
 - **功能**：
   - 基于 WebRTC 的高质量回声消除
@@ -224,7 +306,7 @@ python voice_to_voice.py
 - **详细文档**：参见 [AEC_INTEGRATION.md](AEC_INTEGRATION.md)
 
 ### 4. 语音对话模式
-- **文件**：`voice_to_voice.py`
+- **位置**：`src/main.py` 中的 `VoiceInteractiveMode` 类
 - **功能**：
   - 全语音交互（ASR + LLM + TTS）
   - 语音打断（Barge-in）
@@ -237,7 +319,7 @@ python voice_to_voice.py
   - LLM 停止生成，节省 API 成本
   - 被打断的对话不保存到历史
 - **实现**：
-  - 在 `voice_to_voice.py` 中实现
+  - 在 `VoiceInteractiveMode` 类中实现
   - 使用 `InterruptController` 检测打断
   - 通过 `pipeline.stop()` 停止 LLM 和 TTS
 
