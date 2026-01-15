@@ -460,12 +460,12 @@ def list_audio_devices():
 
 
 class LLMTTSTest:
-    def __init__(self, config_path: str = "config/api_keys.json", role_config: dict = None):
+    def __init__(self, config_path: str = ".env", role_config: dict = None):
         """
         初始化测试类
 
         Args:
-            config_path: 配置文件路径
+            config_path: 配置文件路径（历史参数，当前默认使用 `.env` 作为配置来源）
             role_config: 角色配置（从 role_loader 加载）
         """
         # 使用新的配置加载器

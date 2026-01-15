@@ -1,9 +1,11 @@
-"""
-配置加载工具 - 支持从 .env 文件或 config/api_keys.json 加载配置
+"""src.config_loader
+
+配置加载工具。
+
+当前约定：仅使用 `.env`（推荐且唯一的配置来源）。
 """
 import os
-import json
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 
 
@@ -13,7 +15,7 @@ class ConfigLoader:
         self._load_config()
 
     @staticmethod
-    def _get_env(*keys: str, default: str = None) -> str:
+    def _get_env(*keys: str, default: Optional[str] = None) -> Optional[str]:
         """Return first non-empty env var among keys."""
         for k in keys:
             v = os.getenv(k)
@@ -22,24 +24,23 @@ class ConfigLoader:
         return default
 
     def _load_config(self):
-        """加载配置,优先使用 .env 文件"""
-        # 加载 .env 文件到环境变量
+        """加载配置：仅从 `.env` / 环境变量读取。"""
+        # 加载 .env 文件到环境变量（不会覆盖已存在的环境变量）
         load_dotenv()
 
-        # 尝试从 JSON 文件加载基础配置
-        json_file = "config/api_keys.json"
-        if os.path.exists(json_file):
-            with open(json_file, 'r', encoding='utf-8') as f:
-                self.config = json.load(f)
-        else:
-            self.config = {}
+        # 仅从环境变量构建配置
+        self.config = {}
 
-        # 如果 JSON 缺失或不完整，从环境变量补齐常用配置
+        # 从环境变量补齐/覆盖常用配置（.env 优先级更高）
         # 1) DashScope（Qwen3 TTS / ASR 常用）
         dashscope_key = self._get_env("QWEN3_API_KEY", "DASHSCOPE_API_KEY")
+        qwen3_base_url = self._get_env("QWEN3_BASE_URL")
         if dashscope_key:
             self.config.setdefault("qwen3_tts", {})
-            self.config["qwen3_tts"].setdefault("api_key", dashscope_key)
+            self.config["qwen3_tts"]["api_key"] = dashscope_key
+        if qwen3_base_url:
+            self.config.setdefault("qwen3_tts", {})
+            self.config["qwen3_tts"]["base_url"] = qwen3_base_url
 
         # 2) OpenAI 兼容 LLM
         openai_key = self._get_env("OPENAI_API_KEY")
@@ -48,55 +49,77 @@ class ConfigLoader:
         if openai_key or openai_base_url or openai_model:
             self.config.setdefault("openai_compatible", {})
             if openai_key:
-                self.config["openai_compatible"].setdefault("api_key", openai_key)
+                self.config["openai_compatible"]["api_key"] = openai_key
             if openai_base_url:
-                self.config["openai_compatible"].setdefault("base_url", openai_base_url)
+                self.config["openai_compatible"]["base_url"] = openai_base_url
             if openai_model:
-                self.config["openai_compatible"].setdefault("model", openai_model)
+                self.config["openai_compatible"]["model"] = openai_model
 
         # 3) 火山引擎 Seed2
         volc_app_id = self._get_env("VOLCENGINE_APP_ID")
         volc_api_key = self._get_env("VOLCENGINE_API_KEY")
         volc_access_token = self._get_env("VOLCENGINE_ACCESS_TOKEN")
-        if volc_app_id or volc_api_key or volc_access_token:
+        volc_base_url = self._get_env("VOLCENGINE_BASE_URL")
+        if volc_app_id or volc_api_key or volc_access_token or volc_base_url:
             self.config.setdefault("volcengine_seed2", {})
             if volc_app_id:
-                self.config["volcengine_seed2"].setdefault("app_id", volc_app_id)
+                self.config["volcengine_seed2"]["app_id"] = volc_app_id
             if volc_access_token:
-                self.config["volcengine_seed2"].setdefault("access_token", volc_access_token)
+                self.config["volcengine_seed2"]["access_token"] = volc_access_token
             if volc_api_key:
-                self.config["volcengine_seed2"].setdefault("api_key", volc_api_key)
+                self.config["volcengine_seed2"]["api_key"] = volc_api_key
+            if volc_base_url:
+                self.config["volcengine_seed2"]["base_url"] = volc_base_url
 
         # 4) MiniMax
         minimax_api_key = self._get_env("MINIMAX_API_KEY")
         minimax_group_id = self._get_env("MINIMAX_GROUP_ID")
-        if minimax_api_key or minimax_group_id:
+        minimax_base_url = self._get_env("MINIMAX_BASE_URL")
+        if minimax_api_key or minimax_group_id or minimax_base_url:
             self.config.setdefault("minimax", {})
             if minimax_api_key:
-                self.config["minimax"].setdefault("api_key", minimax_api_key)
+                self.config["minimax"]["api_key"] = minimax_api_key
             if minimax_group_id:
-                self.config["minimax"].setdefault("group_id", minimax_group_id)
+                self.config["minimax"]["group_id"] = minimax_group_id
+            if minimax_base_url:
+                self.config["minimax"]["base_url"] = minimax_base_url
 
         # 5) Mem0（即使 JSON 不存在也给出默认结构）
         self.config.setdefault("mem0", {})
-        # JSON -> env 覆盖仍在下方处理
 
         # 从环境变量覆盖 mem0 配置
-        # 从 .env 读取配置，覆盖 JSON 中的值
-        self.config["mem0"]["enable_mem0"] = os.getenv(
-            "ENABLE_MEM0",
-            str(self.config["mem0"].get("enable_mem0", "true"))
-        ).lower() == "true"
-        self.config["mem0"]["enable_graph"] = os.getenv(
-            "ENABLE_GRAPH",
-            str(self.config["mem0"].get("enable_graph", "false"))
-        ).lower() == "true"
+        # 开关：仅当 env 显式设置时启用；否则默认关闭
+        enable_mem0_env = os.getenv("ENABLE_MEM0")
+        if enable_mem0_env is not None:
+            self.config["mem0"]["enable_mem0"] = str(enable_mem0_env).strip().lower() == "true"
+        else:
+            self.config["mem0"]["enable_mem0"] = False
+
+        enable_graph_env = os.getenv("ENABLE_GRAPH")
+        if enable_graph_env is not None:
+            self.config["mem0"]["enable_graph"] = str(enable_graph_env).strip().lower() == "true"
+        else:
+            self.config["mem0"]["enable_graph"] = False
+
         # 兼容不同变量名：MEM0_USER_ID / DEFAULT_USER_ID
         self.config["mem0"]["user_id"] = self._get_env(
             "MEM0_USER_ID",
             "DEFAULT_USER_ID",
             default=self.config["mem0"].get("user_id", "default_user")
         )
+
+        # Mem0 使用的 LLM 配置（用于记忆提取 + embedding）
+        # 优先 MEM0_LLM_*，否则回退到 OPENAI_*（openai_compatible 段）
+        openai_cfg = self.config.get("openai_compatible", {})
+        mem0_llm_api_key = self._get_env("MEM0_LLM_API_KEY", default=openai_cfg.get("api_key"))
+        mem0_llm_base_url = self._get_env("MEM0_LLM_BASE_URL", default=openai_cfg.get("base_url"))
+        mem0_llm_model = self._get_env("MEM0_LLM_MODEL", default=openai_cfg.get("model"))
+        if mem0_llm_api_key:
+            self.config["mem0"]["llm_api_key"] = mem0_llm_api_key
+        if mem0_llm_base_url:
+            self.config["mem0"]["llm_base_url"] = mem0_llm_base_url
+        if mem0_llm_model:
+            self.config["mem0"]["llm_model"] = mem0_llm_model
 
         # Neo4j 配置
         if os.getenv("NEO4J_URL"):

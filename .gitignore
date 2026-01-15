@@ -1,5 +1,8 @@
 # 环境变量和配置文件
 .env
+
+# 避免误提交历史 JSON 配置（项目已不再支持加载）
+api_keys.json
 config/api_keys.json
 
 # Claude Code
