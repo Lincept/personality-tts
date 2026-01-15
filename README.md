@@ -360,14 +360,23 @@ OPENAI_MODEL=gpt-4
 ### Mem0 配置
 
 ```bash
-# 启用 Mem0
+# 启用 Mem0（可选）
 ENABLE_MEM0=true
-
-# Mem0 使用的 LLM（用于记忆提取）
-MEM0_LLM_MODEL=qwen-turbo
 
 # 用户 ID（用于区分不同用户）
 MEM0_USER_ID=your_user_id
+
+# Mem0 使用的 LLM（用于记忆提取/Embedding）
+# - 如果不设置 MEM0_LLM_*，会自动回退使用 OPENAI_*（openai_compatible）
+MEM0_LLM_API_KEY=your_openai_api_key_here
+MEM0_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+MEM0_LLM_MODEL=qwen-plus
+
+# 可选：启用知识图谱（Neo4j）
+ENABLE_GRAPH=false
+NEO4J_URL=bolt://localhost:7687
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=your_password
 ```
 
 ## 🔧 故障排除
