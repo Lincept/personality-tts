@@ -7,6 +7,7 @@ import os
 import sys
 import json
 import logging
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -24,7 +25,7 @@ from src.role_loader import RoleLoader
 from src.memory.mem0_manager import Mem0Manager
 from src.memory.memory_chat import MemoryEnhancedChat
 
-def _parse_log_level(value: str) -> int | None:
+def _parse_log_level(value: str) -> Optional[int]:
     """Parse log level from env; return None for 'OFF' (disable logging)."""
     if value is None:
         return logging.INFO
