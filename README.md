@@ -57,6 +57,8 @@ personality-tts/
 
 ```bash
 pip install -r requirements.txt
+brew install portaudio
+(sudo apt-get install portaudio19-dev)
 ```
 
 主要依赖：
@@ -97,47 +99,10 @@ ENABLE_MEM0=true
 MEM0_USER_ID=your_user_id
 ```
 
-### 4. 命令行参数说明
-
-#### Python 模块运行参数 `-m`
-
-**作用**：将 Python 文件作为模块来运行
-
-**推荐使用 `-m` 的原因**：
-- ✅ 模块导入更可靠
-- ✅ 符合 Python 最佳实践
-- ✅ 更好地处理模块导入路径
-
-**对比**：
-```bash
-# 方式 1：直接运行（不推荐）
-python3 src/main.py --role natural
-
-# 方式 2：使用 -m 参数（推荐）
-python3 -m src.main --role natural
-```
-
-#### 角色参数 `--role`
-
-**作用**：指定 AI 助手的个性、说话风格和行为特征
-
-**不加 `--role` 的效果**：
-- 📋 会显示角色选择菜单
-- 🎯 需要交互式选择角色
-- 🔄 每次启动都需要选择
-
-**加 `--role` 的效果**：
-- ✅ 直接使用指定的角色
-- ✅ 快速启动，无需选择
-- ✅ 适合已确定角色的场景
-
-#### 可用角色列表
-
-📖 **详细角色说明**：[docs/roles.md](docs/roles.md) - 查看所有角色的详细说明和使用示例
-
 ### 4. 运行
 
 📖 **快速开始指南**：[docs/快速开始.md](docs/快速开始.md) - 30 秒快速上手！
+📖 **详细角色说明**：[docs/roles.md](docs/roles.md) - 查看所有角色的详细说明和使用示例
 
 所有功能通过统一的入口 `src/main.py` 运行，使用命令行参数控制模式。
 
