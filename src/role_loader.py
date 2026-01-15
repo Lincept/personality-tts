@@ -41,6 +41,34 @@ class RoleLoader:
                     # 获取角色配置
                     if hasattr(module, 'ROLE_CONFIG'):
                         config = module.ROLE_CONFIG
+                        if not isinstance(config, dict):
+                            print(f"警告: {filename} 的 ROLE_CONFIG 不是 dict，已跳过")
+                            continue
+
+                        # 兼容缺失字段：用文件名派生默认值，避免 KeyError 影响整体加载
+                        defaults = {
+                            'id': role_id,
+                            'name': role_id,
+                            'personality': '',
+                            'style': '',
+                            'description': '',
+                            'custom_prompt': None
+                        }
+                        missing_keys = [k for k in defaults.keys() if k not in config]
+                        for k, v in defaults.items():
+                            config.setdefault(k, v)
+
+                        if missing_keys:
+                            print(
+                                f"警告: {filename} 缺少字段 {missing_keys}，已使用默认值补齐"
+                            )
+
+                        if config['id'] in self.roles:
+                            print(
+                                f"警告: 角色 id 重复: {config['id']}（来自 {filename}），已跳过"
+                            )
+                            continue
+
                         self.roles[config['id']] = config
                         # print(f"✓ 加载角色: {config['name']} ({config['id']})")  # 静默加载
                     else:
@@ -88,10 +116,10 @@ class RoleLoader:
         print("\n可用角色:")
         print("=" * 60)
         for i, (role_id, config) in enumerate(self.roles.items(), 1):
-            print(f"{i}. {config['name']} ({role_id})")
-            print(f"   特点: {config['personality']}")
-            print(f"   风格: {config['style']}")
-            print(f"   说明: {config['description']}")
+            print(f"{i}. {config.get('name', role_id)} ({role_id})")
+            print(f"   特点: {config.get('personality', '')}")
+            print(f"   风格: {config.get('style', '')}")
+            print(f"   说明: {config.get('description', '')}")
             print()
 
     def select_role_interactive(self) -> str:

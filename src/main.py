@@ -8,6 +8,8 @@ import sys
 import json
 import logging
 
+from dotenv import load_dotenv
+
 # 添加项目路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -22,10 +24,34 @@ from src.role_loader import RoleLoader
 from src.memory.mem0_manager import Mem0Manager
 from src.memory.memory_chat import MemoryEnhancedChat
 
-# 配置记忆模块日志
-logging.basicConfig(level=logging.INFO)
-memory_logger = logging.getLogger("memory_chat")
-memory_logger.setLevel(logging.INFO)
+def _parse_log_level(value: str) -> int | None:
+    """Parse log level from env; return None for 'OFF' (disable logging)."""
+    if value is None:
+        return logging.INFO
+    v = str(value).strip().upper()
+    if v in {"OFF", "NONE", "DISABLE", "FALSE", "0"}:
+        return None
+    if v.isdigit():
+        return int(v)
+    return getattr(logging, v, logging.INFO)
+
+
+# 尽早加载 .env，保证 import 阶段就能按环境变量控制日志
+load_dotenv()
+
+_level = _parse_log_level(os.getenv("PTTS_LOG_LEVEL"))
+if _level is None:
+    logging.disable(logging.CRITICAL)
+else:
+    # force=True 确保即使其它模块已配置过 handler 也能按环境变量重新配置
+    logging.basicConfig(level=_level, force=True)
+    root_logger = logging.getLogger()
+    for h in root_logger.handlers:
+        h.setLevel(_level)
+
+    # 常见噪声来源：HTTP 客户端、WebSocket、以及本项目的 memory_chat
+    for name in ("httpx", "httpcore", "websocket", "websockets", "memory_chat"):
+        logging.getLogger(name).setLevel(_level)
 
 
 class LLMTTSTest:

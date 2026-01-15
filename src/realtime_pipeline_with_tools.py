@@ -131,6 +131,8 @@ class RealtimeStreamingPipelineWithTools:
         # 获取性能指标
         metrics = realtime_tts_client.get_metrics()
 
+        print()
+
         return {
             "text": "".join(full_text),
             "metrics": metrics,

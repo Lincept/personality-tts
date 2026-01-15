@@ -7,6 +7,7 @@ import sys
 import time
 from typing import Optional
 
+
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -30,6 +31,43 @@ def load_env_file():
     return env_vars
 
 
+def _mask_secret(value: str, show_last: int = 4) -> str:
+    """Mask secrets for logs (avoid leaking full keys)."""
+    if not value:
+        return ""
+    value = str(value).strip()
+    if len(value) <= show_last:
+        return "*" * len(value)
+    return "*" * (len(value) - show_last) + value[-show_last:]
+
+
+def check_asr_auth(asr_model: str = "paraformer-realtime-v2") -> int:
+    """Quickly validate DashScope ASR auth without opening microphone."""
+    env_vars = load_env_file()
+    api_key = (
+        env_vars.get('QWEN3_API_KEY') or os.getenv('QWEN3_API_KEY') or
+        env_vars.get('DASHSCOPE_API_KEY') or os.getenv('DASHSCOPE_API_KEY')
+    )
+
+    if not api_key:
+        print('❌ 未找到 DashScope API Key（QWEN3_API_KEY 或 DASHSCOPE_API_KEY）')
+        return 2
+
+    print(f"🔑 DashScope Key: {_mask_secret(api_key)}")
+    print(f"🎤 ASR 模型: {asr_model}")
+
+    asr = DashScopeASR(api_key=api_key, model=asr_model)
+    try:
+        asr.start(on_text=lambda _: None, on_sentence=lambda _: None)
+        # 立即停止，只验证鉴权/连接是否成功
+        asr.stop()
+        print('✅ ASR 鉴权/连接正常')
+        return 0
+    except Exception as e:
+        print(f'❌ ASR 鉴权/连接失败: {e}')
+        return 1
+
+
 class VoiceInteractiveMode:
     """语音交互模式 - 支持语音输入和打断，集成 AEC 回声消除"""
 
@@ -46,10 +84,18 @@ class VoiceInteractiveMode:
         """
         # 加载环境变量
         env_vars = load_env_file()
-        api_key = env_vars.get('QWEN3_API_KEY') or os.getenv('QWEN3_API_KEY')
+        api_key = (
+            env_vars.get('QWEN3_API_KEY') or os.getenv('QWEN3_API_KEY') or
+            env_vars.get('DASHSCOPE_API_KEY') or os.getenv('DASHSCOPE_API_KEY')
+        )
 
         if not api_key:
-            raise ValueError('未找到 QWEN3_API_KEY，请检查 .env 文件')
+            raise ValueError(
+                '未找到 DashScope API Key，请在 .env 中设置 QWEN3_API_KEY 或 DASHSCOPE_API_KEY'
+            )
+
+        # 仅展示脱敏信息，方便排查是否读取到了 Key
+        print(f"🔑 DashScope Key: {_mask_secret(api_key)}")
 
         # 加载角色配置
         role_loader = RoleLoader()
@@ -57,6 +103,13 @@ class VoiceInteractiveMode:
 
         # 初始化主程序
         self.llm_tts = LLMTTSTest(role_config=role_config)
+
+        # 提前校验 LLM 配置，避免进入语音流程后才 401
+        llm_cfg = self.llm_tts.config.get("openai_compatible", {})
+        if not llm_cfg.get("api_key"):
+            raise ValueError(
+                '未找到 LLM 的 OPENAI_API_KEY，请在 .env 中配置 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL'
+            )
         self.llm_tts.initialize_llm()
 
         # 初始化 ASR
@@ -99,13 +152,27 @@ class VoiceInteractiveMode:
         self.interrupt_controller = InterruptController()
 
         # 初始化 TTS 客户端（全局复用，初始化时创建一次）
-        from src.tts.volcengine_realtime_tts import VolcengineRealtimeTTS
-        config = self.llm_tts.config.get("volcengine_seed2", {})
-        self.realtime_tts = VolcengineRealtimeTTS(
-            app_id=config.get("app_id"),
-            access_token=config.get("access_token") or config.get("api_key"),
-            voice="zh_female_cancan_mars_bigtts"
-        )
+        volc_cfg = self.llm_tts.config.get("volcengine_seed2", {})
+        volc_app_id = volc_cfg.get("app_id")
+        volc_token = volc_cfg.get("access_token") or volc_cfg.get("api_key")
+
+        if volc_app_id and volc_token:
+            from src.tts.volcengine_realtime_tts import VolcengineRealtimeTTS
+            self.realtime_tts = VolcengineRealtimeTTS(
+                app_id=volc_app_id,
+                access_token=volc_token,
+                voice="zh_female_cancan_mars_bigtts"
+            )
+            print('🔊 TTS: volcengine_seed2')
+        else:
+            # 默认回退到 Qwen3 TTS（使用同一个 DashScope Key）
+            from src.tts.qwen3_realtime_tts import Qwen3RealtimeTTS
+            self.realtime_tts = Qwen3RealtimeTTS(
+                api_key=api_key,
+                voice="Cherry",
+                verbose=False
+            )
+            print('🔊 TTS: qwen3')
 
         # 状态
         self.is_listening = False
@@ -257,8 +324,10 @@ class VoiceInteractiveMode:
 
         # 立即结束旧 session（火山引擎限制同时只能有1个session）
         if hasattr(self, 'realtime_tts'):
-            self.realtime_tts.finish()
-            self.realtime_tts.clear_queue()
+            if hasattr(self.realtime_tts, 'finish'):
+                self.realtime_tts.finish()
+            if hasattr(self.realtime_tts, 'clear_queue'):
+                self.realtime_tts.clear_queue()
 
         # 停止音频播放
         if self.current_player:
@@ -282,18 +351,12 @@ class VoiceInteractiveMode:
             # 启动音频输入（先启动，确保麦克风打开）
             self.audio_input.start(audio_callback=self.asr.send_audio)
 
-            # 启动 ASR（在后台）
-            import threading
-            asr_thread = threading.Thread(
-                target=self.asr.start,
-                kwargs={
-                    'on_text': self.on_asr_text,
-                    'on_sentence': self.on_asr_sentence
-                },
-                daemon=True
+            # 启动 ASR（同步启动，确保鉴权失败等错误能立刻暴露）
+            self.asr.start(
+                on_text=self.on_asr_text,
+                on_sentence=self.on_asr_sentence
             )
-            asr_thread.start()
-            time.sleep(0.5)
+            time.sleep(0.2)
 
             # 启动打断控制器
             self.interrupt_controller.start_monitoring(
@@ -326,7 +389,8 @@ class VoiceInteractiveMode:
 
             # 断开 TTS 连接（复用的全局客户端）
             if hasattr(self, 'realtime_tts'):
-                self.realtime_tts.disconnect()
+                if hasattr(self.realtime_tts, 'disconnect'):
+                    self.realtime_tts.disconnect()
 
             # 关闭 Mem0 连接，确保数据持久化
             if self.llm_tts.mem0_manager:
@@ -343,6 +407,7 @@ def main():
     parser.add_argument('--asr-model', type=str, default='paraformer-realtime-v2',
                         choices=['paraformer-realtime-v2', 'fun-asr-realtime-2025-11-07'],
                         help='ASR 模型选择（默认: paraformer-realtime-v2）')
+    parser.add_argument('--check-asr', action='store_true', help='仅检查 ASR 鉴权/连接（不打开麦克风）')
     parser.add_argument('--list-devices', action='store_true', help='列出所有音频设备')
     args = parser.parse_args()
 
@@ -366,6 +431,9 @@ def main():
         print("  2. 启用 AEC（外放模式）：python voice_to_voice.py --device-index <聚合设备索引>")
         p.terminate()
         return
+
+    if args.check_asr:
+        raise SystemExit(check_asr_auth(asr_model=args.asr_model))
 
     try:
         voice_mode = VoiceInteractiveMode(
