@@ -18,7 +18,7 @@ class RealtimeStreamingPipeline:
 
     def run(self, llm_stream: Generator[str, None, None],
             realtime_tts_client, streaming_player,
-            display_text: bool = True):
+            display_text: bool = True, timer=None):
         """
         运行实时流式管道
 
@@ -27,6 +27,7 @@ class RealtimeStreamingPipeline:
             realtime_tts_client: 实时 TTS 客户端 (Qwen3RealtimeTTS 或 VolcengineRealtimeTTS)
             streaming_player: StreamingAudioPlayer 播放器
             display_text: 是否显示文本
+            timer: ConversationTimer 实例（可选，用于性能监控）
         """
         # 启动 TTS 会话 - 根据客户端类型使用不同参数
         client_type = type(realtime_tts_client).__name__
@@ -89,6 +90,9 @@ class RealtimeStreamingPipeline:
         # 通知 TTS 结束
         realtime_tts_client.finish()
 
+        # 计时：TTS 处理和播放
+        tts_start = time.time()
+
         # 等待 TTS 完成 - 根据客户端类型
         if hasattr(realtime_tts_client, 'wait_for_completion'):
             realtime_tts_client.wait_for_completion(timeout=30)
@@ -96,8 +100,37 @@ class RealtimeStreamingPipeline:
         # 等待播放完成
         player_thread.join(timeout=10)
 
+        tts_duration = time.time() - tts_start
+
         # 获取性能指标（静默模式）
         metrics = realtime_tts_client.get_metrics()
+
+        # 如果提供了计时器，记录统计
+        if timer and timer.enable:
+            # 注意：LLM生成时间由 memory_chat 提供，这里不重复记录
+            # 只记录 TTS 相关的统计
+            timer.stats["TTS处理"] = type('obj', (object,), {
+                'duration': tts_duration,
+                'name': 'TTS处理'
+            })
+
+            # 添加 TTS 详细指标
+            if metrics:
+                if metrics.get("first_audio_delay"):
+                    timer.stats["TTS首字延迟"] = type('obj', (object,), {
+                        'duration': metrics["first_audio_delay"],
+                        'name': 'TTS首字延迟'
+                    })
+                if metrics.get("total_duration"):
+                    timer.stats["TTS总时长"] = type('obj', (object,), {
+                        'duration': metrics["total_duration"],
+                        'name': 'TTS总时长'
+                    })
+                if metrics.get("audio_chunks"):
+                    timer.stats["TTS音频块数"] = type('obj', (object,), {
+                        'duration': metrics["audio_chunks"],
+                        'name': 'TTS音频块数'
+                    })
 
         # 注意：不再自动断开连接，复用全局 TTS 客户端
 

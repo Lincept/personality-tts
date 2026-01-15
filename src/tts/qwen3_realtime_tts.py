@@ -29,6 +29,10 @@ class RealtimeTTSCallback(QwenTtsRealtimeCallback):
         self.session_id = None
         self.first_audio_received = False
         self.start_time = None
+        self.first_audio_time = None
+        self.last_audio_time = None
+        self.audio_chunks_received = 0
+        self.total_audio_bytes = 0
         self.verbose = verbose
 
     def on_open(self) -> None:
@@ -59,9 +63,13 @@ class RealtimeTTSCallback(QwenTtsRealtimeCallback):
                 if audio_b64:
                     audio_bytes = base64.b64decode(audio_b64)
                     self.audio_queue.put(audio_bytes)
+                    self.audio_chunks_received += 1
+                    self.total_audio_bytes += len(audio_bytes)
+                    self.last_audio_time = time.time()
 
                     if not self.first_audio_received:
                         self.first_audio_received = True
+                        self.first_audio_time = time.time()
                         if self.verbose:
                             delay = time.time() - self.start_time
                             print(f'[实时TTS] 首个音频块延迟: {delay:.3f}秒')
@@ -87,6 +95,24 @@ class RealtimeTTSCallback(QwenTtsRealtimeCallback):
     def wait_for_finished(self, timeout=None):
         """等待会话完成"""
         return self.complete_event.wait(timeout)
+
+    def get_tts_metrics(self) -> dict:
+        """获取 TTS 性能指标"""
+        metrics = {
+            "session_id": self.session_id,
+            "first_audio_delay": None,
+            "total_duration": None,
+            "audio_chunks": self.audio_chunks_received,
+            "total_audio_bytes": self.total_audio_bytes
+        }
+
+        if self.start_time and self.first_audio_time:
+            metrics["first_audio_delay"] = self.first_audio_time - self.start_time
+
+        if self.start_time and self.last_audio_time:
+            metrics["total_duration"] = self.last_audio_time - self.start_time
+
+        return metrics
 
 
 class Qwen3RealtimeTTS:
@@ -196,7 +222,9 @@ class Qwen3RealtimeTTS:
             self.client.finish()
             if self.verbose:
                 print('[实时TTS] 会话结束信号已发送')
-
+            # 等待会话完成
+            if hasattr(self.client, 'callback') and self.client.callback.complete_event:
+                self.client.callback.complete_event.wait(timeout=30)
     def wait_for_completion(self, timeout=None):
         """等待会话完成"""
         if self.client and hasattr(self.client, 'callback'):
@@ -205,12 +233,8 @@ class Qwen3RealtimeTTS:
 
     def get_metrics(self) -> dict:
         """获取性能指标"""
-        if self.client:
-            return {
-                "session_id": self.client.get_session_id(),
-                "first_audio_delay": self.client.get_first_audio_delay(),
-                "last_response_id": self.client.get_last_response_id()
-            }
+        if self.client and hasattr(self.client, 'callback'):
+            return self.client.callback.get_tts_metrics()
         return {}
 
     def get_available_voices(self) -> list:

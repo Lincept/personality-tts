@@ -10,6 +10,7 @@
 
 import json
 import logging
+import time
 from typing import Optional, List, Dict, Any, Generator
 from dataclasses import dataclass, field
 from openai import OpenAI
@@ -175,6 +176,7 @@ class MemoryEnhancedChat:
         self.user_id = user_id
         self.role_description = role_description
         self.verbose = verbose
+        self.last_timing_stats = {}  # 保存最后一次对话的时间统计
 
         # 配置日志级别
         if verbose:
@@ -240,13 +242,14 @@ class MemoryEnhancedChat:
 
         Yields:
             回复文本片段
+
+        Returns:
+            dict: 包含所有时间统计的字典
         """
         history = history or []
 
         # ========== 第一阶段：意图分析（非流式）==========
-        analysis = self._analyze_intent(user_input, history)
-
-        logger.info(f"[分析] need_search={analysis.need_memory_search}, save={analysis.should_save_memory}")
+        analysis, analysis_duration = self._analyze_intent(user_input, history)
 
         # ========== 处理存储（Hook）==========
         if analysis.should_save_memory and analysis.memory_to_save:
@@ -254,22 +257,42 @@ class MemoryEnhancedChat:
 
         # ========== 处理检索 ==========
         retrieved_memories = ""
+        search_start = time.time()
         if analysis.need_memory_search and analysis.memory_search_query:
             retrieved_memories = self._search_memories(analysis.memory_search_query)
-            logger.info(f"[检索] query={analysis.memory_search_query}, 结果: {retrieved_memories}")
+            search_duration = time.time() - search_start
+        else:
+            search_duration = 0
 
         # ========== 第二阶段：流式生成回复 ==========
-        yield from self._generate_response_stream(
+        llm_duration = yield from self._generate_response_stream(
             user_input,
             history,
             retrieved_memories
         )
 
-    def _analyze_intent(self, user_input: str, history: List[Dict]) -> AnalysisResult:
+        # 保存时间统计到实例变量
+        self.last_timing_stats = {
+            "analysis_duration": analysis_duration,
+            "search_duration": search_duration,
+            "llm_duration": llm_duration
+        }
+
+        # 返回时间统计
+        return {
+            "analysis_duration": analysis_duration,
+            "search_duration": search_duration,
+            "llm_duration": llm_duration
+        }
+
+    def _analyze_intent(self, user_input: str, history: List[Dict]) -> tuple[AnalysisResult, float]:
         """
         第一阶段：分析用户意图
 
         独立的上下文：对话历史 + 用户输入 + 角色信息
+
+        Returns:
+            (AnalysisResult, duration): 分析结果和耗时（秒）
         """
         system_prompt = ANALYSIS_SYSTEM_PROMPT.format(
             role_description=self.role_description
@@ -289,7 +312,8 @@ class MemoryEnhancedChat:
         messages.append({"role": "user", "content": user_input})
 
         try:
-            # 调用 LLM（JSON Object 模式）
+            # 计时：LLM 查询计划执行（网络传输 + 处理）
+            llm_start = time.time()
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -297,6 +321,7 @@ class MemoryEnhancedChat:
                 temperature=0.3,  # 低温度，更稳定
                 max_tokens=500
             )
+            llm_duration = time.time() - llm_start
 
             # 解析结果
             content = response.choices[0].message.content
@@ -317,7 +342,7 @@ class MemoryEnhancedChat:
                 memory_search_query=data.get("memory_search_query"),
                 should_save_memory=data.get("should_save_memory", False),
                 memory_to_save=memory_to_save
-            )
+            ), llm_duration
 
         except Exception as e:
             logger.error(f"[分析错误] {e}")
@@ -326,7 +351,7 @@ class MemoryEnhancedChat:
                 thinking=f"分析出错: {e}",
                 need_memory_search=False,
                 should_save_memory=False
-            )
+            ), 0
 
     def _generate_response(
         self,
@@ -381,6 +406,9 @@ class MemoryEnhancedChat:
         第二阶段：流式生成回复（支持 TTS）
 
         注意：流式模式不使用 JSON Object，直接输出文本
+
+        Yields:
+            文本片段
         """
         system_prompt = RESPONSE_SYSTEM_PROMPT_STREAM.format(
             role_description=self.role_description,
@@ -398,7 +426,8 @@ class MemoryEnhancedChat:
         messages.append({"role": "user", "content": user_input})
 
         try:
-            # 流式调用（不使用 response_format）
+            # 计时：LLM 流式生成（网络传输 + 处理）
+            llm_start = time.time()
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -406,14 +435,18 @@ class MemoryEnhancedChat:
                 max_tokens=2000,
                 stream=True
             )
+            llm_duration = time.time() - llm_start
 
             for chunk in response:
                 if chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
 
+            return llm_duration
+
         except Exception as e:
             logger.error(f"[流式回复错误] {e}")
             yield f"抱歉，出现了一些问题: {e}"
+            return 0
 
     def _search_memories(self, query: str) -> str:
         """检索记忆"""

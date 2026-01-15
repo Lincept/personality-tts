@@ -32,6 +32,7 @@ from src.memory.mem0_manager import Mem0Manager
 from src.memory.memory_chat import MemoryEnhancedChat
 from src.asr import DashScopeASR, AudioInput, InterruptController
 from src.asr.aec_processor import SimpleAEC
+from src.timing_utils import ConversationTimer
 
 def _parse_log_level(value: str) -> Optional[int]:
     """Parse log level from env; return None for 'OFF' (disable logging)."""
@@ -179,6 +180,12 @@ class VoiceInteractiveMode:
         self.last_sentence_time = 0  # 上次触发对话的时间（防止太快重复触发）
         self.should_exit = False  # 退出标志
 
+        # 初始化计时器（从环境变量读取配置）
+        enable_timing = os.getenv("PTTS_ENABLE_TIMING", "false").lower() == "true"
+        self.timer = ConversationTimer(enable=enable_timing)
+        if enable_timing:
+            print("⏱️  性能监控已启用")
+
     def on_asr_text(self, text: str):
         """ASR 中间结果回调"""
         # 如果 AI 正在说话，只用于打断检测，不显示
@@ -239,6 +246,9 @@ class VoiceInteractiveMode:
         # 停止监听
         self.is_listening = False
 
+        # 开始新的对话计时
+        self.timer.start_conversation()
+
         # 在新线程中处理 LLM + TTS，避免阻塞 ASR
         tts_thread = threading.Thread(target=self._process_and_speak, args=(text,))
         tts_thread.daemon = True
@@ -282,13 +292,37 @@ class VoiceInteractiveMode:
                 llm_stream=llm_stream_generator(),
                 realtime_tts_client=self.realtime_tts,
                 streaming_player=streaming_player,
-                display_text=True
+                display_text=True,
+                timer=self.timer
             )
 
             # 保存对话历史（即使被打断也要保存，因为 LLM 已经生成了回复）
             if result and result.get("text"):
                 self.llm_tts.voice_prompt.add_conversation('user', text)
                 self.llm_tts.voice_prompt.add_conversation('assistant', result["text"])
+
+            # 添加记忆相关的时间统计
+            if hasattr(self.llm_tts.memory_chat, 'last_timing_stats'):
+                timing_stats = self.llm_tts.memory_chat.last_timing_stats
+                if timing_stats:
+                    if timing_stats.get("analysis_duration") and timing_stats["analysis_duration"] > 0:
+                        self.timer.stats["意图分析"] = type('obj', (object,), {
+                            'duration': timing_stats["analysis_duration"],
+                            'name': '意图分析'
+                        })
+                    if timing_stats.get("search_duration") and timing_stats["search_duration"] > 0:
+                        self.timer.stats["记忆检索"] = type('obj', (object,), {
+                            'duration': timing_stats["search_duration"],
+                            'name': '记忆检索'
+                        })
+                    if timing_stats.get("llm_duration") and timing_stats["llm_duration"] > 0:
+                        self.timer.stats["LLM生成"] = type('obj', (object,), {
+                            'duration': timing_stats["llm_duration"],
+                            'name': 'LLM生成'
+                        })
+
+            # 打印性能统计
+            self.timer.print_summary()
 
         except Exception as e:
             print(f'\n❌ 错误: {e}')
@@ -510,6 +544,10 @@ class LLMTTSTest:
         # 确保输出目录存在
         os.makedirs(self.output_dir, exist_ok=True)
 
+        # 初始化计时器（从环境变量读取配置）
+        enable_timing = os.getenv("PTTS_ENABLE_TIMING", "false").lower() == "true"
+        self.timer = ConversationTimer(enable=enable_timing)
+
     def initialize_llm(self):
         """初始化LLM客户端"""
         llm_config = self.config.get("openai_compatible", {})
@@ -530,6 +568,9 @@ class LLMTTSTest:
             prompt: 用户输入
             play_audio: 是否播放音频
         """
+        # 开始新的对话计时
+        self.timer.start_conversation()
+
         # 获取对话历史
         history = []
         for msg in self.voice_prompt.conversation_history:
@@ -560,12 +601,36 @@ class LLMTTSTest:
             llm_stream=llm_stream_generator(),
             realtime_tts_client=realtime_tts,
             streaming_player=streaming_player,
-            display_text=True
+            display_text=True,
+            timer=self.timer
         )
 
         # 保存对话历史（短期记忆）
         self.voice_prompt.add_conversation('user', prompt)
         self.voice_prompt.add_conversation('assistant', result["text"])
+
+        # 添加记忆相关的时间统计
+        if hasattr(self.memory_chat, 'last_timing_stats'):
+            timing_stats = self.memory_chat.last_timing_stats
+            if timing_stats:
+                if timing_stats.get("analysis_duration") and timing_stats["analysis_duration"] > 0:
+                    self.timer.stats["意图分析"] = type('obj', (object,), {
+                        'duration': timing_stats["analysis_duration"],
+                        'name': '意图分析'
+                    })
+                if timing_stats.get("search_duration") and timing_stats["search_duration"] > 0:
+                    self.timer.stats["记忆检索"] = type('obj', (object,), {
+                        'duration': timing_stats["search_duration"],
+                        'name': '记忆检索'
+                    })
+                if timing_stats.get("llm_duration") and timing_stats["llm_duration"] > 0:
+                    self.timer.stats["LLM生成"] = type('obj', (object,), {
+                        'duration': timing_stats["llm_duration"],
+                        'name': 'LLM生成'
+                    })
+
+        # 打印性能统计
+        self.timer.print_summary()
 
         print()  # 换行
 
@@ -586,6 +651,9 @@ class LLMTTSTest:
             prompt: 用户输入
             play_audio: 是否播放音频
         """
+        # 开始新的对话计时
+        self.timer.start_conversation()
+
         # 获取对话历史
         history = []
         for msg in self.voice_prompt.conversation_history:
@@ -616,12 +684,36 @@ class LLMTTSTest:
             llm_stream=llm_stream_generator(),
             realtime_tts_client=realtime_tts,
             streaming_player=streaming_player,
-            display_text=True
+            display_text=True,
+            timer=self.timer
         )
 
         # 保存对话历史（短期记忆）
         self.voice_prompt.add_conversation('user', prompt)
         self.voice_prompt.add_conversation('assistant', result["text"])
+
+        # 添加记忆相关的时间统计
+        if hasattr(self.memory_chat, 'last_timing_stats'):
+            timing_stats = self.memory_chat.last_timing_stats
+            if timing_stats:
+                if timing_stats.get("analysis_duration") and timing_stats["analysis_duration"] > 0:
+                    self.timer.stats["意图分析"] = type('obj', (object,), {
+                        'duration': timing_stats["analysis_duration"],
+                        'name': '意图分析'
+                    })
+                if timing_stats.get("search_duration") and timing_stats["search_duration"] > 0:
+                    self.timer.stats["记忆检索"] = type('obj', (object,), {
+                        'duration': timing_stats["search_duration"],
+                        'name': '记忆检索'
+                    })
+                if timing_stats.get("llm_duration") and timing_stats["llm_duration"] > 0:
+                    self.timer.stats["LLM生成"] = type('obj', (object,), {
+                        'duration': timing_stats["llm_duration"],
+                        'name': 'LLM生成'
+                    })
+
+        # 打印性能统计
+        self.timer.print_summary()
 
         print()  # 换行
 
