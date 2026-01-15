@@ -9,3 +9,4 @@ dashscope>=1.14.0
 volcengine-python-sdk>=1.0.0
 mem0ai>=1.0.1
 qdrant-client>=1.7.0
+websockets
