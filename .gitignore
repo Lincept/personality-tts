@@ -24,11 +24,16 @@ ENV/
 *.swo
 
 # 数据文件
-data/qdrant/
-data/neo4j/
-data/audios/
+data/
 *.db
 *.sqlite
+
+# 二进制文件
+src/webrtc_apm/
+*.dylib
+*.dll
+*.lib
+*.exp
 
 # 日志
 *.log
