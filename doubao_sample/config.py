@@ -1,6 +1,21 @@
 import uuid
 import pyaudio
 
+# Viking 长期记忆（VikingDB Memory）配置
+# 说明：AK/SK 建议通过环境变量提供：VOLC_ACCESSKEY / VOLC_SECRETKEY
+MEMORY_ENABLE = True
+MEMORY_COLLECTION_NAME = "test1"
+# user_id / assistant_id 至少填一个（用于 filter）
+MEMORY_USER_ID = "user_01"
+MEMORY_ASSISTANT_ID = ""
+# 可选：限定检索的记忆类型（来自你在 Viking 记忆库控制台的事件规则定义）
+MEMORY_TYPES = ["event_v1", "profile_v1"]
+MEMORY_LIMIT = 3
+MEMORY_TRANSITION_WORDS = "根据你的历史记录："
+# 可选：也可以在这里直接配置 AK/SK（不推荐，优先使用环境变量）
+MEMORY_AK = ""
+MEMORY_SK = ""
+
 # 配置信息
 # 日志控制开关 - 设置为False关闭所有日志输出
 ENABLE_LOG = False

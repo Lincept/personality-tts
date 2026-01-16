@@ -1,12 +1,12 @@
 import gzip
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import websockets
 
 import config
 import protocol
-from timer import timer
+from utils import timer
 
 
 class RealtimeDialogClient:

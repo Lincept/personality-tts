@@ -23,4 +23,5 @@ class Timer:
             for name, elapsed in self.elapsed_times.items():
                 print(f"  {name}: {elapsed:.3f}s")
 
+
 timer = Timer()

@@ -13,9 +13,9 @@ from typing import Optional, Dict, Any
 import pyaudio
 
 import config
+from memory_client import MemoryClient, MemorySettings, extract_assistant_text, extract_user_query_from_asr
 from realtime_dialog_client import RealtimeDialogClient
-from timer import timer
-
+from utils import timer
 
 @dataclass
 class AudioConfig:
@@ -98,6 +98,27 @@ class DialogSession:
         self.is_sending_chat_tts_text = False
         self.audio_buffer = b''
 
+        self.last_asr_text: str = ""
+        self.pending_user_turn: Optional[str] = None
+        self.pending_assistant_text_parts: list[str] = []
+        self.conversation_messages: list[Dict[str, str]] = []
+
+        self.memory_client: Optional[MemoryClient] = None
+        if getattr(config, "MEMORY_ENABLE", False):
+            self.memory_client = MemoryClient(
+                MemorySettings(
+                    enable=True,
+                    ak=getattr(config, "MEMORY_AK", ""),
+                    sk=getattr(config, "MEMORY_SK", ""),
+                    collection_name=getattr(config, "MEMORY_COLLECTION_NAME", ""),
+                    user_id=getattr(config, "MEMORY_USER_ID", ""),
+                    assistant_id=getattr(config, "MEMORY_ASSISTANT_ID", ""),
+                    memory_types=list(getattr(config, "MEMORY_TYPES", []) or []),
+                    limit=int(getattr(config, "MEMORY_LIMIT", 3)),
+                    transition_words=str(getattr(config, "MEMORY_TRANSITION_WORDS", "根据你的历史记录：")),
+                )
+            )
+
         signal.signal(signal.SIGINT, self._keyboard_signal)
         self.audio_queue = queue.Queue()
         if not self.is_audio_file_input:
@@ -149,6 +170,24 @@ class DialogSession:
             event = response.get('event')
             payload_msg = response.get('payload_msg', {})
 
+            # 记录 ASR 文本（451: ASRResponse）
+            if event == 451:
+                text = extract_user_query_from_asr(payload_msg)
+                if text:
+                    self.last_asr_text = text
+
+            # 记录助手文本（550: ChatResponse, 559: ChatEnded）
+            if event == 550:
+                text = extract_assistant_text(payload_msg)
+                if text:
+                    self.pending_assistant_text_parts.append(text)
+            if event == 559:
+                if self.pending_assistant_text_parts:
+                    assistant_text = "".join(self.pending_assistant_text_parts).strip()
+                    self.pending_assistant_text_parts.clear()
+                    if assistant_text:
+                        self.conversation_messages.append({"role": "assistant", "content": assistant_text})
+
             if event == 450:
                 if config.ENABLE_LOG:
                     print(f"清空缓存音频: {response['session_id']}")
@@ -169,10 +208,12 @@ class DialogSession:
 
             if event == 459:
                 self.is_user_querying = False
-                if random.randint(0, 100000)%1 == 0:
-                    self.is_sending_chat_tts_text = True
-                    asyncio.create_task(self.trigger_chat_tts_text())
-                    asyncio.create_task(self.trigger_chat_rag_text())
+                user_text = (self.last_asr_text or "").strip()
+                if user_text:
+                    self.conversation_messages.append({"role": "user", "content": user_text})
+                # 触发外部 RAG：这里接入 Viking 长期记忆检索
+                if self.memory_client is not None and user_text:
+                    asyncio.create_task(self.trigger_memory_rag(user_text))
         elif response['message_type'] == 'SERVER_ERROR':
             if config.ENABLE_LOG:
                 print(f"服务器错误: {response['payload_msg']}")
@@ -199,7 +240,22 @@ class DialogSession:
         await asyncio.sleep(0) # 模拟查询外部RAG的耗时，这里为了不影响GTA安抚话术的播报，直接sleep 5秒
         if config.ENABLE_LOG:
             print("hit ChatRAGText event, start sending...")
-        await self.client.chat_rag_text(self.is_user_querying, external_rag='[{"title":"北京天气","content":"今天北京整体以晴到多云为主，但西部和北部地带可能会出现分散性雷阵雨，特别是午后至傍晚时段需注意突发降雨。\n💨 风况与湿度\n风力较弱，一般为 2–3 级南风或西南风\n白天湿度较高，早晚略凉爽"}]')
+
+    async def trigger_memory_rag(self, user_text: str) -> None:
+        if self.memory_client is None:
+            return
+        try:
+            external_rag = await self.memory_client.search_external_rag(user_text)
+        except Exception as e:
+            if config.ENABLE_LOG:
+                print(f"memory search failed: {e}")
+            return
+
+        if not external_rag:
+            return
+
+        # 将记忆作为 external_rag 注入服务端上下文
+        await self.client.chat_rag_text(self.is_user_querying, external_rag=external_rag)
 
     def _keyboard_signal(self, sig, frame):
         if config.ENABLE_LOG:
@@ -387,6 +443,16 @@ class DialogSession:
             if config.ENABLE_LOG:
                 print(f"dialog request logid: {self.client.logid}, chat mod: {self.mod}")
             save_output_to_file(self.audio_buffer, "output.pcm")
+
+            # 会话结束后，尝试把本次对话写入 Viking 记忆库
+            if self.memory_client is not None and self.conversation_messages:
+                try:
+                    await self.memory_client.add_session(self.session_id, self.conversation_messages)
+                    if config.ENABLE_LOG:
+                        print("memory archived")
+                except Exception as e:
+                    if config.ENABLE_LOG:
+                        print(f"memory archive failed: {e}")
         except Exception as e:
             if config.ENABLE_LOG:
                 print(f"会话错误: {e}")
