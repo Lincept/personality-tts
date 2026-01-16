@@ -14,10 +14,10 @@
 
 1) 必填鉴权
 
-- 推荐方式：使用项目根目录 `.env.example` 生成 `.env`，再填写变量。
+-- 推荐方式：使用 doubao_sample 目录内的 `.env.example` 生成 `.env`，再填写变量。
 
 ```bash
-cp ../.env.example ../.env
+cp .env.example .env
 ```
 
 必填变量：
