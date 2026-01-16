@@ -139,7 +139,7 @@ class DashScopeASR:
             if '401' in err or 'Unauthorized' in err or 'unauthorized' in err:
                 print('❌ ASR 鉴权失败（HTTP 401）')
                 print('   - 请确认使用的是 DashScope 的 API Key（不是 OpenAI Key）')
-                print('   - .env 可设置 QWEN3_API_KEY 或 DASHSCOPE_API_KEY')
+                print('   - 请在 config/api_keys.json 中配置 qwen3_tts.api_key')
                 print('   - 也可能是 ASR 模型无权限，可尝试 --asr-model fun-asr-realtime-2025-11-07')
             else:
                 print(f'❌ ASR 启动失败: {e}')

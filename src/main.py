@@ -23,6 +23,7 @@ from src.voice_assistant_prompt import VoiceAssistantPrompt
 from src.role_loader import RoleLoader
 from src.memory.mem0_manager import Mem0Manager
 from src.memory.memory_chat import MemoryEnhancedChat
+from src.context import ContextBuilder
 
 def _parse_log_level(value: str) -> int | None:
     """Parse log level from env; return None for 'OFF' (disable logging)."""
@@ -90,8 +91,21 @@ class LLMTTSTest:
         if role_config:
             self.role_description = f"你是{role_config.get('name', '助手')}，{role_config.get('personality', '友好')}"
 
-        # 初始化记忆增强对话（新方案：两阶段结构化输出）
+        # 初始化上下文构建器（动态分层上下文）
         llm_config = self.config.get("openai_compatible", {})
+        agent_id = role_config.get('id', 'default') if role_config else 'default'
+        agent_mbti = role_config.get('mbti', 'ENFP') if role_config else 'ENFP'
+        base_prompt = role_config.get('custom_prompt', '') if role_config else ''
+
+        self.context_builder = ContextBuilder(
+            agent_id=agent_id,
+            mbti_type=agent_mbti,
+            mem0_manager=self.mem0_manager,
+            llm_client=None,  # 稍后在 initialize_llm 中设置
+            base_role_prompt=base_prompt
+        )
+
+        # 初始化记忆增强对话（新方案：两阶段结构化输出 + 分层上下文）
         self.memory_chat = MemoryEnhancedChat(
             api_key=llm_config.get("api_key"),
             base_url=llm_config.get("base_url"),
@@ -99,7 +113,8 @@ class LLMTTSTest:
             mem0_manager=self.mem0_manager,
             user_id=self.user_id,
             role_description=self.role_description,
-            verbose=False  # 生产模式关闭详细日志
+            verbose=False,  # 生产模式关闭详细日志
+            context_builder=self.context_builder  # 传入上下文构建器
         )
 
         # 初始化语音助手 Prompt 管理器（保留用于对话历史管理）

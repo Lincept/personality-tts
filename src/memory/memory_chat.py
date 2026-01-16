@@ -155,7 +155,8 @@ class MemoryEnhancedChat:
         mem0_manager = None,
         user_id: str = "default_user",
         role_description: str = "你是一个友好的 AI 助手",
-        verbose: bool = False
+        verbose: bool = False,
+        context_builder = None  # 新增：上下文构建器
     ):
         """
         初始化记忆增强对话
@@ -168,6 +169,7 @@ class MemoryEnhancedChat:
             user_id: 用户 ID
             role_description: 角色描述
             verbose: 是否输出详细日志到控制台
+            context_builder: ContextBuilder 实例（可选，用于分层上下文）
         """
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
@@ -175,6 +177,7 @@ class MemoryEnhancedChat:
         self.user_id = user_id
         self.role_description = role_description
         self.verbose = verbose
+        self.context_builder = context_builder  # 新增
 
         # 配置日志级别
         if verbose:
@@ -382,10 +385,22 @@ class MemoryEnhancedChat:
 
         注意：流式模式不使用 JSON Object，直接输出文本
         """
-        system_prompt = RESPONSE_SYSTEM_PROMPT_STREAM.format(
-            role_description=self.role_description,
-            retrieved_memories=retrieved_memories if retrieved_memories else "（无历史记忆）"
-        )
+        # 如果有 context_builder，使用分层上下文
+        if self.context_builder:
+            dynamic_context = self.context_builder.build_context(
+                user_id=self.user_id,
+                user_input=user_input,
+                conversation_history=history
+            )
+            system_prompt = RESPONSE_SYSTEM_PROMPT_STREAM.format(
+                role_description=dynamic_context,
+                retrieved_memories=retrieved_memories if retrieved_memories else "（无历史记忆）"
+            )
+        else:
+            system_prompt = RESPONSE_SYSTEM_PROMPT_STREAM.format(
+                role_description=self.role_description,
+                retrieved_memories=retrieved_memories if retrieved_memories else "（无历史记忆）"
+            )
 
         messages = [
             {"role": "system", "content": system_prompt}
@@ -473,6 +488,45 @@ class MemoryEnhancedChat:
 
         except Exception as e:
             logger.error(f"[存储失败] {e}")
+
+    def on_conversation_turn(
+        self,
+        user_input: str,
+        assistant_response: str,
+        history: List[Dict]
+    ):
+        """
+        对话轮次结束后调用
+
+        用于更新 ContextBuilder 的状态
+
+        Args:
+            user_input: 用户输入
+            assistant_response: 助手回复
+            history: 对话历史
+        """
+        if self.context_builder:
+            self.context_builder.on_conversation_turn(
+                user_id=self.user_id,
+                user_input=user_input,
+                assistant_response=assistant_response,
+                conversation_history=history
+            )
+
+    def on_session_end(self, history: List[Dict]):
+        """
+        会话结束时调用
+
+        用于执行 ContextBuilder 的会话结束处理
+
+        Args:
+            history: 完整对话历史
+        """
+        if self.context_builder:
+            self.context_builder.on_session_end(
+                user_id=self.user_id,
+                conversation_history=history
+            )
 
 
 # ============================================

@@ -15,20 +15,7 @@ from src.asr import DashScopeASR, AudioInput, InterruptController
 from src.asr.aec_processor import SimpleAEC
 from src.main import LLMTTSTest
 from src.role_loader import RoleLoader
-
-
-def load_env_file():
-    """手动加载 .env 文件"""
-    env_path = os.path.join(os.path.dirname(__file__), '.env')
-    env_vars = {}
-    if os.path.exists(env_path):
-        with open(env_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
-                    env_vars[key.strip()] = value.strip()
-    return env_vars
+from src.config_loader import ConfigLoader
 
 
 def _mask_secret(value: str, show_last: int = 4) -> str:
@@ -43,14 +30,11 @@ def _mask_secret(value: str, show_last: int = 4) -> str:
 
 def check_asr_auth(asr_model: str = "paraformer-realtime-v2") -> int:
     """Quickly validate DashScope ASR auth without opening microphone."""
-    env_vars = load_env_file()
-    api_key = (
-        env_vars.get('QWEN3_API_KEY') or os.getenv('QWEN3_API_KEY') or
-        env_vars.get('DASHSCOPE_API_KEY') or os.getenv('DASHSCOPE_API_KEY')
-    )
+    config = ConfigLoader().get_config()
+    api_key = config.get("qwen3_tts", {}).get("api_key")
 
     if not api_key:
-        print('❌ 未找到 DashScope API Key（QWEN3_API_KEY 或 DASHSCOPE_API_KEY）')
+        print('❌ 未找到 DashScope API Key，请在 config/api_keys.json 中配置 qwen3_tts.api_key')
         return 2
 
     print(f"🔑 DashScope Key: {_mask_secret(api_key)}")
@@ -82,16 +66,13 @@ class VoiceInteractiveMode:
                 - "paraformer-realtime-v2": Paraformer 实时模型 v2（推荐，准确度高）
                 - "fun-asr-realtime-2025-11-07": FunASR 2025 版本（默认）
         """
-        # 加载环境变量
-        env_vars = load_env_file()
-        api_key = (
-            env_vars.get('QWEN3_API_KEY') or os.getenv('QWEN3_API_KEY') or
-            env_vars.get('DASHSCOPE_API_KEY') or os.getenv('DASHSCOPE_API_KEY')
-        )
+        # 使用 ConfigLoader 统一加载配置
+        self.config = ConfigLoader().get_config()
+        api_key = self.config.get("qwen3_tts", {}).get("api_key")
 
         if not api_key:
             raise ValueError(
-                '未找到 DashScope API Key，请在 .env 中设置 QWEN3_API_KEY 或 DASHSCOPE_API_KEY'
+                '未找到 DashScope API Key，请在 config/api_keys.json 中配置 qwen3_tts.api_key'
             )
 
         # 仅展示脱敏信息，方便排查是否读取到了 Key
@@ -108,7 +89,7 @@ class VoiceInteractiveMode:
         llm_cfg = self.llm_tts.config.get("openai_compatible", {})
         if not llm_cfg.get("api_key"):
             raise ValueError(
-                '未找到 LLM 的 OPENAI_API_KEY，请在 .env 中配置 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL'
+                '未找到 LLM 的 API Key，请在 config/api_keys.json 中配置 openai_compatible.api_key'
             )
         self.llm_tts.initialize_llm()
 
@@ -151,11 +132,12 @@ class VoiceInteractiveMode:
         # 初始化打断控制器
         self.interrupt_controller = InterruptController()
 
-        # 初始化 TTS 客户端（全局复用，初始化时创建一次）
+        # 初始化 TTS 客户端（默认使用 Qwen3 TTS，可选火山引擎）
         volc_cfg = self.llm_tts.config.get("volcengine_seed2", {})
         volc_app_id = volc_cfg.get("app_id")
         volc_token = volc_cfg.get("access_token") or volc_cfg.get("api_key")
 
+        # 只有明确配置了火山引擎才使用，否则默认 Qwen3 TTS
         if volc_app_id and volc_token:
             from src.tts.volcengine_realtime_tts import VolcengineRealtimeTTS
             self.realtime_tts = VolcengineRealtimeTTS(
@@ -165,7 +147,6 @@ class VoiceInteractiveMode:
             )
             print('🔊 TTS: volcengine_seed2')
         else:
-            # 默认回退到 Qwen3 TTS（使用同一个 DashScope Key）
             from src.tts.qwen3_realtime_tts import Qwen3RealtimeTTS
             self.realtime_tts = Qwen3RealtimeTTS(
                 api_key=api_key,
