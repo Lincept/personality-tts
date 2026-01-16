@@ -1,32 +1,21 @@
+import os
 import uuid
 import pyaudio
 
-# Viking 长期记忆（VikingDB Memory）配置
-# 说明：AK/SK 建议通过环境变量提供：VOLC_ACCESSKEY / VOLC_SECRETKEY
-MEMORY_ENABLE = True
-MEMORY_COLLECTION_NAME = "test1"
-# user_id / assistant_id 至少填一个（用于 filter）
-MEMORY_USER_ID = "user_01"
-MEMORY_ASSISTANT_ID = ""
-# 可选：限定检索的记忆类型（来自你在 Viking 记忆库控制台的事件规则定义）
-MEMORY_TYPES = ["event_v1", "profile_v1"]
-MEMORY_LIMIT = 3
-MEMORY_TRANSITION_WORDS = "根据你的历史记录："
-# 可选：也可以在这里直接配置 AK/SK（不推荐，优先使用环境变量）
-MEMORY_AK = ""
-MEMORY_SK = ""
-
 # 配置信息
 # 日志控制开关 - 设置为False关闭所有日志输出
-ENABLE_LOG = False
+ENABLE_LOG = True
 # 计时功能开关 - 设置为True启用计时功能
-ENABLE_TIMER = True
+ENABLE_TIMER = False
 
 ws_connect_config = {
     "base_url": "wss://openspeech.bytedance.com/api/v3/realtime/dialogue",
     "headers": {
-        "X-Api-App-ID": "5895920164",
-        "X-Api-Access-Key": "4MbXgOcz5LKLT0nkHAJnnx1Jg-Lch8a1",
+        # 从环境变量读取，避免在仓库中存放明文密钥
+        # export DOUBAO_APP_ID=xxx
+        # export DOUBAO_ACCESS_KEY=xxx
+        "X-Api-App-ID": os.getenv("DOUBAO_APP_ID", ""),
+        "X-Api-Access-Key": os.getenv("DOUBAO_ACCESS_KEY", ""),
         "X-Api-Resource-Id": "volc.speech.dialog",  # 固定值
         "X-Api-App-Key": "PlgvMymc7f3tQnJ6",  # 固定值
         "X-Api-Connect-Id": str(uuid.uuid4()),
@@ -81,3 +70,18 @@ output_audio_config = {
     "sample_rate": 24000,
     "bit_size": pyaudio.paFloat32
 }
+
+# Memory Config（VikingDB）
+
+# 建议通过环境变量提供，避免泄露：
+# export VIKINGDB_AK=xxx
+# export VIKINGDB_SK=xxx
+VIKINGDB_AK = os.getenv("VIKINGDB_AK", "")
+VIKINGDB_SK = os.getenv("VIKINGDB_SK", "")
+
+# 下面这些通常不算敏感，但也支持环境变量覆盖
+VIKINGDB_COLLECTION = os.getenv("VIKINGDB_COLLECTION", "test1")
+VIKINGDB_ASSISTANT_ID = os.getenv("VIKINGDB_ASSISTANT_ID", "111")
+VIKINGDB_ASSISTANT_NAME = os.getenv("VIKINGDB_ASSISTANT_NAME", "Assistant")
+VIKINGDB_USER_ID = os.getenv("VIKINGDB_USER_ID", "1")
+VIKINGDB_USER_NAME = os.getenv("VIKINGDB_USER_NAME", "User")

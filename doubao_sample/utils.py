@@ -1,5 +1,5 @@
 import time
-from typing import Dict, Any, List, Tuple
+from typing import Dict, List, Any
 import statistics
 
 # 从config中导入计时开关配置
@@ -15,7 +15,7 @@ class Timer:
         # 新增：记录多个相同操作的耗时列表
         self.operation_durations: Dict[str, List[float]] = {}
         # 新增：记录音频数据量
-        self.audio_data_stats: Dict[str, Dict[str, int]] = {}
+        self.audio_data_stats: Dict[str, Dict[str, Any]] = {}
         self.enabled = ENABLE_TIMER
     
     def start(self, name: str, operation_type: str = "") -> None:
@@ -115,6 +115,25 @@ class Timer:
         self.durations.clear()
         self.operation_durations.clear()
         self.audio_data_stats.clear()
+
+def normalize_messages(messages: Dict) -> List[Dict]:
+    target = []
+    for _, v in messages.items():
+        user_content = (v.get("user") or "").strip()
+        assistant_content = (v.get("assistant") or "").strip()
+        if not user_content and not assistant_content:
+            continue
+        if user_content:
+            target.append({
+                "role": "user",
+                "content": user_content
+            })
+        if assistant_content:
+            target.append({
+                "role": "assistant",
+                "content": assistant_content
+            })
+    return target
 
 # 创建全局计时器实例
 timer = Timer()

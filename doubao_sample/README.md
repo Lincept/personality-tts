@@ -1,74 +1,94 @@
 # RealtimeDialog
 
-实时语音对话程序，支持语音输入和语音输出。
+实时语音对话程序，支持语音输入/输出、文本交互与可选记忆存储。
 
-## 使用说明
+## 配置要点（config.py）
 
-此demo使用python3.7环境进行开发调试，其他python版本可能会有兼容性问题，需要自己尝试解决。
+- 接口鉴权：通过环境变量注入（App ID / Access Key），避免明文写入仓库
+- 角色与风格：`start_session_req.dialog`（`bot_name`、`system_role`、`speaking_style`）
+- ASR/TTS：`start_session_req.asr`、`start_session_req.tts`（`speaker`、采样率）
+- 音频采集/播放：`input_audio_config`、`output_audio_config`
+- 记忆库：`VIKINGDB_*`（仅在 `--memory` 开启时使用）
 
-1. 配置API密钥
-   - 打开 `config.py` 文件
-   - 修改以下两个字段：
-     ```python
-     "X-Api-App-ID": "火山控制台上端到端大模型对应的App ID",
-     "X-Api-Access-Key": "火山控制台上端到端大模型对应的Access Key",
-     ```
-   - 修改speaker字段指定发音人，本次支持四个发音人：
-     - `zh_female_vv_jupiter_bigtts`：中文vv女声
-     - `zh_female_xiaohe_jupiter_bigtts`：中文xiaohe女声
-     - `zh_male_yunzhou_jupiter_bigtts`：中文云洲男声
-     - `zh_male_xiaotian_jupiter_bigtts`：中文小天男声
+## 配置指导（简要）
 
-2. 安装依赖
+1) 必填鉴权
+
+- 必填环境变量：
+   - `DOUBAO_APP_ID`
+   - `DOUBAO_ACCESS_KEY`
+
+示例：
+
+```bash
+export DOUBAO_APP_ID=your_app_id
+export DOUBAO_ACCESS_KEY=your_access_key
+```
+
+2) 语音与角色
+
+- 选发音人：`start_session_req.tts.speaker`
+- 角色设定：`start_session_req.dialog.system_role`
+- 风格语气：`start_session_req.dialog.speaking_style`
+
+- 可用发音人：
+
+   - `zh_female_vv_jupiter_bigtts`
+   - `zh_female_xiaohe_jupiter_bigtts`
+   - `zh_male_yunzhou_jupiter_bigtts`
+   - `zh_male_xiaotian_jupiter_bigtts`
+
+3) 音频参数
+
+- 采样率：`start_session_req.tts.audio_config.sample_rate`
+- 录音流：`input_audio_config.sample_rate` 与声道/分块大小
+
+4) 记忆存储（可选，重要）
+
+- 作用：在会话结束时把 ASR 文本（用户）与 TTS 文本（助手）写入 VikingDB，便于后续画像与事件检索。
+- 开启方式：配置 `VIKINGDB_*` 环境变量后运行 `python main.py --memory`。
+- 建议环境变量：
+   - `VIKINGDB_AK` / `VIKINGDB_SK`
+   - `VIKINGDB_COLLECTION`
+   - `VIKINGDB_USER_ID` / `VIKINGDB_ASSISTANT_ID`
+
+示例：
+
+```bash
+export VIKINGDB_AK=your_ak
+export VIKINGDB_SK=your_sk
+export VIKINGDB_COLLECTION=test1
+export VIKINGDB_USER_ID=1
+export VIKINGDB_ASSISTANT_ID=111
+```
+
+- 关键字段说明：
+   - `VIKINGDB_COLLECTION`：记忆库集合名
+   - `VIKINGDB_USER_ID` / `VIKINGDB_ASSISTANT_ID`：用于检索与隔离不同用户/助手之间的记忆
+- 说明：若会话中没有产生有效文本（例如仅音频但无识别结果），将不会保存。
+
+## 安装
+
+```bash
+pip install -r requirements.txt
+```
+
+## 运行
+
+麦克风：
    ```bash
-   pip install -r requirements.txt
-   
-3. 通过麦克风运行程序
-   ```bash
-   python main.py --format=pcm
+   python main.py
+   # python main.py --mod=audio
    ```
-4. 通过录音文件启动程序
+音频文件：
    ```bash
-   python main.py --audio=whoareyou.wav
+   python main.py --audio=data/whoareyou.wav
    ```
-5. 通过纯文本输入和程序交互
+文本：
    ```bash
    python main.py --mod=text --recv_timeout=120
    ```
-
-## 接入 Viking 长期记忆（可选）
-
-该 demo 支持在每轮 ASR 结束后，从 Viking 记忆库检索相关历史记忆，并通过 `external_rag` 注入对话上下文；同时在会话结束时，会把本次对话（尽力收集到的 user/assistant 文本）写入记忆库。
-
-前置条件（参考火山引擎文档）：
-
-1. 开通 Viking 长期记忆，并在控制台创建记忆库（拿到 `collection_name`）
-2. 设置记忆库鉴权 AK/SK 到环境变量：
-   - `VOLC_ACCESSKEY`
-   - `VOLC_SECRETKEY`
-
-启用方式：
-
-1. 修改 `config.py` 中的以下配置：
-   - `MEMORY_ENABLE = True`
-   - `MEMORY_COLLECTION_NAME = "你的collection_name"`
-   - `MEMORY_USER_ID` / `MEMORY_ASSISTANT_ID`（至少填一个）
-   - `MEMORY_TYPES`（可选，填事件规则里定义的 memory_type）
-   - `MEMORY_LIMIT`（默认 3）
-2. 运行：
-   直接在 `config.py` 里填写：
-   - `MEMORY_AK` / `MEMORY_SK`
-
+启用记忆存储：
    ```bash
-   # 也可以通过环境变量提供 AK/SK
-   export VOLC_ACCESSKEY=xxxx
-   export VOLC_SECRETKEY=yyyy
-   python main.py --format=pcm
+   python main.py --memory
    ```
-
-实现说明：
-- 记忆检索/归档逻辑都在 `memory_client.py` 中（包含 Viking API 调用封装）。
-- demo 会在每轮 ASR 结束后检索记忆并通过 `external_rag` 注入；会话结束后归档本次对话到记忆库。
-
-注意：
-- 首次写入后索引构建可能需要 3–5 分钟，期间检索可能返回“索引构建中”的错误码，demo 会跳过该轮记忆注入。
