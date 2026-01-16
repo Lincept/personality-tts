@@ -2,5 +2,6 @@ pyaudio
 websockets
 vikingdb-python-sdk
 requests>=2.31.0
+python-dotenv>=1.0.0
 dataclasses==0.8; python_version < "3.7"
 typing-extensions==4.7.1; python_version < "3.8"

@@ -14,16 +14,16 @@
 
 1) 必填鉴权
 
-- 必填环境变量：
-   - `DOUBAO_APP_ID`
-   - `DOUBAO_ACCESS_KEY`
-
-示例：
+- 推荐方式：使用项目根目录 `.env.example` 生成 `.env`，再填写变量。
 
 ```bash
-export DOUBAO_APP_ID=your_app_id
-export DOUBAO_ACCESS_KEY=your_access_key
+cp ../.env.example ../.env
 ```
+
+必填变量：
+
+- `DOUBAO_APP_ID`
+- `DOUBAO_ACCESS_KEY`
 
 2) 语音与角色
 
@@ -46,20 +46,20 @@ export DOUBAO_ACCESS_KEY=your_access_key
 4) 记忆存储（可选，重要）
 
 - 作用：在会话结束时把 ASR 文本（用户）与 TTS 文本（助手）写入 VikingDB，便于后续画像与事件检索。
-- 开启方式：配置 `VIKINGDB_*` 环境变量后运行 `python main.py --memory`。
+- 开启方式：在 `.env` 中配置 `VIKINGDB_*` 后运行 `python main.py --memory`。
 - 建议环境变量：
    - `VIKINGDB_AK` / `VIKINGDB_SK`
    - `VIKINGDB_COLLECTION`
    - `VIKINGDB_USER_ID` / `VIKINGDB_ASSISTANT_ID`
 
-示例：
+示例（写入 `.env`）：
 
-```bash
-export VIKINGDB_AK=your_ak
-export VIKINGDB_SK=your_sk
-export VIKINGDB_COLLECTION=test1
-export VIKINGDB_USER_ID=1
-export VIKINGDB_ASSISTANT_ID=111
+```dotenv
+VIKINGDB_AK=your_ak
+VIKINGDB_SK=your_sk
+VIKINGDB_COLLECTION=test1
+VIKINGDB_USER_ID=1
+VIKINGDB_ASSISTANT_ID=111
 ```
 
 - 关键字段说明：

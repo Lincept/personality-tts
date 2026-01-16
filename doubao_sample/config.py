@@ -2,6 +2,17 @@ import os
 import uuid
 import pyaudio
 
+try:
+    from dotenv import load_dotenv, find_dotenv
+
+    # 自动加载项目根目录的 .env（通常由 .env.example 复制而来）
+    # - 不覆盖已存在的环境变量
+    # - 允许在 doubao_sample 子目录执行时向上查找
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+except Exception:
+    # 未安装 python-dotenv 或查找失败时，仍可通过系统环境变量运行
+    pass
+
 # 配置信息
 # 日志控制开关 - 设置为False关闭所有日志输出
 ENABLE_LOG = True
