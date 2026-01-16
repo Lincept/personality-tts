@@ -55,14 +55,16 @@ else:
 
 
 class LLMTTSTest:
-    def __init__(self, config_path: str = "config/api_keys.json", role_config: dict = None):
+    def __init__(self, config_path: str = "config/api_keys.json", role_config: dict = None, role_loader: RoleLoader = None):
         """
         初始化测试类
 
         Args:
             config_path: 配置文件路径
             role_config: 角色配置（从 role_loader 加载）
+            role_loader: 角色加载器实例
         """
+        self.role_loader = role_loader
         # 使用新的配置加载器
         config_loader = ConfigLoader()
         self.config = config_loader.get_config()
@@ -101,7 +103,7 @@ class LLMTTSTest:
         )
 
         # 初始化语音助手 Prompt 管理器（保留用于对话历史管理）
-        self.voice_prompt = VoiceAssistantPrompt(role_config=role_config, mem0_manager=None)
+        self.voice_prompt = VoiceAssistantPrompt(role_config=role_config, mem0_manager=None, role_loader=role_loader)
 
         # 确保输出目录存在
         os.makedirs(self.output_dir, exist_ok=True)
@@ -316,7 +318,11 @@ class LLMTTSTest:
                     else:
                         current_role = self.voice_prompt.get_role_info()
                         print(f"当前角色: {current_role['name']}")
-                        print("可选角色: default, casual, professional, companion\n")
+                        if self.role_loader:
+                            role_ids = ", ".join(self.role_loader.get_role_ids())
+                            print(f"可选角色: {role_ids}\n")
+                        else:
+                            print("可选角色: 未加载角色列表\n")
 
                 elif user_input == "/history":
                     summary = self.voice_prompt.get_conversation_summary()
@@ -423,8 +429,8 @@ def main():
         print(f"  特点: {role_config['personality']}")
         print(f"  风格: {role_config['style']}\n")
 
-    # 初始化测试类（传入角色配置）
-    test = LLMTTSTest(role_config=role_config)
+    # 初始化测试类（传入角色配置和角色加载器）
+    test = LLMTTSTest(role_config=role_config, role_loader=role_loader)
 
     # 默认进入交互模式
     test.interactive_mode()

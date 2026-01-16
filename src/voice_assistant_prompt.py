@@ -9,17 +9,19 @@ from datetime import datetime
 class VoiceAssistantPrompt:
     """语音助手 Prompt 管理器"""
 
-    def __init__(self, role: str = "default", role_config: Optional[Dict] = None, mem0_manager=None):
+    def __init__(self, role: str = "default", role_config: Optional[Dict] = None, mem0_manager=None, role_loader=None):
         """
         初始化 Prompt 管理器
 
         Args:
-            role: 角色类型 (default/casual/professional/companion)
+            role: 角色类型
             role_config: 自定义角色配置（从 role_loader 加载）
             mem0_manager: Mem0 记忆管理器（可选）
+            role_loader: 角色加载器（可选）
         """
         self.role = role
         self.custom_role_config = role_config  # 保存自定义角色配置
+        self.role_loader = role_loader  # 角色加载器
         self.mem0_manager = mem0_manager  # Mem0 记忆管理器
         self.system_prompt = self._build_system_prompt()
         self.user_info = {}
@@ -137,16 +139,33 @@ class VoiceAssistantPrompt:
         切换助手角色
 
         Args:
-            role: 角色类型 (default/casual/professional/companion)
+            role: 角色ID
         """
+        # 优先从 role_loader 加载
+        if self.role_loader:
+            role_config = self.role_loader.get_role(role)
+            if role_config:
+                self.role = role
+                self.custom_role_config = role_config
+                self.system_prompt = self._build_system_prompt()
+                return
+            else:
+                available = self.role_loader.get_role_ids()
+                raise ValueError(f"未知角色: {role}，可选: {available}")
+
+        # 降级到内置角色
         if role not in VoiceAssistantConfig.ROLES:
             raise ValueError(f"未知角色: {role}，可选: {list(VoiceAssistantConfig.ROLES.keys())}")
 
         self.role = role
+        self.custom_role_config = None
         self.system_prompt = self._build_system_prompt()
 
     def get_role_info(self) -> Dict:
         """获取当前角色信息"""
+        # 优先返回自定义角色配置
+        if self.custom_role_config:
+            return self.custom_role_config
         return VoiceAssistantConfig.ROLES.get(self.role, VoiceAssistantConfig.ROLES["default"])
 
     def set_user_info(self, name: Optional[str] = None,
@@ -303,32 +322,12 @@ class VoiceAssistantPrompt:
 class VoiceAssistantConfig:
     """语音助手配置"""
 
-    # 角色预设
+    # 默认角色（仅作为 fallback，实际角色从 roles/ 目录加载）
     ROLES = {
         'default': {
-            'name': '幽默助手',
-            'personality': '风趣、搞笑、机智',
-            'style': '幽默对话'
-        },
-        'friendly': {
-            'name': '友好助手',
-            'personality': '友好、专业、简洁',
+            'name': '默认助手',
+            'personality': '友好、专业',
             'style': '自然对话'
-        },
-        'casual': {
-            'name': '轻松助手',
-            'personality': '活泼、幽默、随和',
-            'style': '轻松聊天'
-        },
-        'professional': {
-            'name': '专业助手',
-            'personality': '严谨、专业、高效',
-            'style': '专业咨询'
-        },
-        'companion': {
-            'name': '陪伴助手',
-            'personality': '温暖、关心、耐心',
-            'style': '情感陪伴'
         }
     }
 
