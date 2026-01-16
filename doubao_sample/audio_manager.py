@@ -1,21 +1,19 @@
 import asyncio
+import threading
 import queue
+import time
 import random
 import signal
 import sys
-import threading
-import time
-import uuid
-import wave
+from typing import Dict, Any, Optional
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
-
+import wave
 import pyaudio
 
-import config
-from memory_client import MemoryClient, MemorySettings, extract_assistant_text, extract_user_query_from_asr
 from realtime_dialog_client import RealtimeDialogClient
-from utils import timer
+import config
+from timer import timer
+
 
 @dataclass
 class AudioConfig:
@@ -39,7 +37,6 @@ class AudioDeviceManager:
 
     def open_input_stream(self) -> pyaudio.Stream:
         """打开音频输入流"""
-        # p = pyaudio.PyAudio()
         self.input_stream = self.pyaudio.open(
             format=self.input_config.bit_size,
             channels=self.input_config.channels,
@@ -60,7 +57,7 @@ class AudioDeviceManager:
         )
         return self.output_stream
 
-    def cleanup(self) -> None:
+    def terminate(self) -> None:
         """清理音频设备资源"""
         for stream in [self.input_stream, self.output_stream]:
             if stream:
@@ -69,101 +66,63 @@ class AudioDeviceManager:
         self.pyaudio.terminate()
 
 
-class DialogSession:
-    """对话会话管理类"""
-    is_audio_file_input: bool
-    mod: str
-
-    def __init__(self, ws_config: Dict[str, Any], output_audio_format: str = "pcm", audio_file_path: str = "",
-                 mod: str = "audio", recv_timeout: int = 10):
+class AudioManager:
+    """音频管理器，专注于语音实时输入输出性能监控"""
+    
+    def __init__(self, audio_file_path: Optional[str] = None, recv_timeout: int = 30):
         self.audio_file_path = audio_file_path
+        self.is_audio_file_input = audio_file_path is not None
         self.recv_timeout = recv_timeout
-        self.is_audio_file_input = self.audio_file_path != ""
-        if self.is_audio_file_input:
-            mod = 'audio_file'
-        else:
-            self.say_hello_over_event = asyncio.Event()
-        self.mod = mod
-
-        self.session_id = str(uuid.uuid4())
-        self.client = RealtimeDialogClient(config=ws_config, session_id=self.session_id,
-                                           output_audio_format=output_audio_format, mod=mod, recv_timeout=recv_timeout)
-        if output_audio_format == "pcm_s16le":
-            config.output_audio_config["format"] = "pcm_s16le"
-            config.output_audio_config["bit_size"] = pyaudio.paInt16
-
+        self.client = None
+        self.audio_device = None
+        self.audio_queue = None
+        self.output_stream = None
+        self.is_recording = False
+        self.is_playing = False
         self.is_running = True
         self.is_session_finished = False
+        self.player_thread = None
+        self.audio_buffer = b''
         self.is_user_querying = False
         self.is_sending_chat_tts_text = False
-        self.audio_buffer = b''
+        self.say_hello_over_event = threading.Event()
 
-        self.last_asr_text: str = ""
-        self.pending_user_turn: Optional[str] = None
-        self.pending_assistant_text_parts: list[str] = []
-        self.conversation_messages: list[Dict[str, str]] = []
+    def stop(self):
+        """停止所有音频操作"""
+        self.is_recording = False
+        self.is_playing = False
+        self.is_running = False
+        if self.output_stream:
+            self.output_stream.stop_stream()
+            self.output_stream.close()
+        if self.audio_device:
+            self.audio_device.terminate()
 
-        self.memory_client: Optional[MemoryClient] = None
-        if getattr(config, "MEMORY_ENABLE", False):
-            self.memory_client = MemoryClient(
-                MemorySettings(
-                    enable=True,
-                    ak=getattr(config, "MEMORY_AK", ""),
-                    sk=getattr(config, "MEMORY_SK", ""),
-                    collection_name=getattr(config, "MEMORY_COLLECTION_NAME", ""),
-                    user_id=getattr(config, "MEMORY_USER_ID", ""),
-                    assistant_id=getattr(config, "MEMORY_ASSISTANT_ID", ""),
-                    memory_types=list(getattr(config, "MEMORY_TYPES", []) or []),
-                    limit=int(getattr(config, "MEMORY_LIMIT", 3)),
-                    transition_words=str(getattr(config, "MEMORY_TRANSITION_WORDS", "根据你的历史记录：")),
-                )
-            )
-
-        signal.signal(signal.SIGINT, self._keyboard_signal)
-        self.audio_queue = queue.Queue()
-        if not self.is_audio_file_input:
-            self.audio_device = AudioDeviceManager(
-                AudioConfig(**config.input_audio_config),
-                AudioConfig(**config.output_audio_config)
-            )
-            # 初始化音频队列和输出流
-            self.output_stream = self.audio_device.open_output_stream()
-            # 启动播放线程
-            self.is_recording = True
-            self.is_playing = True
-            self.player_thread = threading.Thread(target=self._audio_player_thread)
-            self.player_thread.daemon = True
-            self.player_thread.start()
-
-    def _audio_player_thread(self):
-        """音频播放线程"""
-        while self.is_playing:
-            try:
-                # 从队列获取音频数据
-                audio_data = self.audio_queue.get(timeout=1.0)
-                if audio_data is not None:
-                    self.output_stream.write(audio_data)
-            except queue.Empty:
-                # 队列为空时等待一小段时间
-                time.sleep(0.1)
-            except Exception as e:
-                if config.ENABLE_LOG:
-                    print(f"音频播放错误: {e}")
-                time.sleep(0.1)
+    def _keyboard_signal(self, signum, frame):
+        """处理键盘中断信号"""
+        if config.ENABLE_LOG:
+            print("\n检测到中断信号，正在优雅退出...")
+        self.stop()
+        self.is_session_finished = True
 
     def handle_server_response(self, response: Dict[str, Any]) -> None:
+        """处理服务器响应"""
         if response == {}:
             return
-        """处理服务器响应"""
+            
         if response['message_type'] == 'SERVER_ACK' and isinstance(response.get('payload_msg'), bytes):
-            # if config.ENABLE_LOG:
-            #     print(f"\n接收到音频数据: {len(response['payload_msg'])} 字节")
+            audio_data = response['payload_msg']
+            
+            # 记录音频数据接收
+            timer.record_audio_data("audio_receive", len(audio_data))
+            
             if self.is_sending_chat_tts_text:
                 return
-            audio_data = response['payload_msg']
+                
             if not self.is_audio_file_input:
                 self.audio_queue.put(audio_data)
             self.audio_buffer += audio_data
+            
         elif response['message_type'] == 'SERVER_FULL_RESPONSE':
             if config.ENABLE_LOG:
                 print(f"服务器响应: {response}")
@@ -196,6 +155,8 @@ class DialogSession:
                         self.audio_queue.get_nowait()
                     except queue.Empty:
                         continue
+
+            if event == 350 and payload_msg.get("tts_type") in ["chat_tts_text"]:
                 self.is_user_querying = True
 
             if event == 350 and self.is_sending_chat_tts_text and payload_msg.get("tts_type") in ["chat_tts_text", "external_rag"]:
@@ -229,108 +190,92 @@ class DialogSession:
             end=False,
             content="emmm",
         )
-        await self.client.chat_tts_text(
-            is_user_querying=self.is_user_querying,
-            start=False,
-            end=True,
-            content="",
-        )
 
     async def trigger_chat_rag_text(self):
-        await asyncio.sleep(0) # 模拟查询外部RAG的耗时，这里为了不影响GTA安抚话术的播报，直接sleep 5秒
+        """概率触发发送ChatRAGText请求"""
         if config.ENABLE_LOG:
             print("hit ChatRAGText event, start sending...")
+        await self.client.chat_rag_text(
+            is_user_querying=self.is_user_querying,
+            start=True,
+            end=False,
+            content="emmm",
+        )
 
-    async def trigger_memory_rag(self, user_text: str) -> None:
-        if self.memory_client is None:
-            return
+    def _audio_player_thread(self):
+        """音频播放线程"""
+        while self.is_playing:
+            try:
+                audio_data = self.audio_queue.get(timeout=1.0)
+                if audio_data is not None:
+                    # 记录音频播放开始
+                    timer.start("audio_play_single", "audio_play")
+                    self.output_stream.write(audio_data)
+                    # 记录音频播放结束
+                    timer.end("audio_play_single", "audio_play")
+            except queue.Empty:
+                time.sleep(0.1)
+            except Exception as e:
+                if config.ENABLE_LOG:
+                    print(f"音频播放错误: {e}")
+                time.sleep(0.1)
+
+    async def start(self) -> None:
+        """启动对话会话"""
+        timer.start("session_start")
         try:
-            external_rag = await self.memory_client.search_external_rag(user_text)
-        except Exception as e:
-            if config.ENABLE_LOG:
-                print(f"memory search failed: {e}")
-            return
+            self.client = RealtimeDialogClient(recv_timeout=self.recv_timeout, mod="audio_file" if self.is_audio_file_input else "mic")
+            await self.client.connect()
+            
+            self.audio_queue = queue.Queue()
+            if not self.is_audio_file_input:
+                self.audio_device = AudioDeviceManager(
+                    AudioConfig(**config.input_audio_config),
+                    AudioConfig(**config.output_audio_config)
+                )
+                self.output_stream = self.audio_device.open_output_stream()
+                self.is_recording = True
+                self.is_playing = True
+                self.player_thread = threading.Thread(target=self._audio_player_thread)
+                self.player_thread.daemon = True
+                self.player_thread.start()
 
-        if not external_rag:
-            return
-
-        # 将记忆作为 external_rag 注入服务端上下文
-        await self.client.chat_rag_text(self.is_user_querying, external_rag=external_rag)
-
-    def _keyboard_signal(self, sig, frame):
-        if config.ENABLE_LOG:
-            print(f"receive keyboard Ctrl+C")
-        self.stop()
-
-    def stop(self):
-        self.is_recording = False
-        self.is_playing = False
-        self.is_running = False
-
-    async def receive_loop(self):
-        try:
-            while True:
-                response = await self.client.receive_server_response()
-                self.handle_server_response(response)
-                if 'event' in response and (response['event'] == 152 or response['event'] == 153):
-                    if config.ENABLE_LOG:
-                        print(f"receive session finished event: {response['event']}")
-                    self.is_session_finished = True
-                    break
-                if 'event' in response and response['event'] == 359:
-                    if self.is_audio_file_input:
-                        if config.ENABLE_LOG:
-                            print(f"receive tts ended event")
-                        self.is_session_finished = True
-                        break
-                    else:
-                        if not self.say_hello_over_event.is_set():
-                            if config.ENABLE_LOG:
-                                print(f"receive tts sayhello ended event")
-                            self.say_hello_over_event.set()
-                        if self.mod == "text":
-                            if config.ENABLE_LOG:
-                                print("请输入内容：")
-
-        except asyncio.CancelledError:
-            if config.ENABLE_LOG:
-                print("接收任务已取消")
-        except Exception as e:
-            if config.ENABLE_LOG:
-                print(f"接收消息错误: {e}")
+            signal.signal(signal.SIGINT, self._keyboard_signal)
+            
+            # 根据输入模式启动相应的处理流程
+            if self.is_audio_file_input:
+                await self.process_audio_file()
+            else:
+                await self.process_microphone_input()
+                
+            # 等待会话结束
+            while not self.is_session_finished:
+                await asyncio.sleep(1)
+                
         finally:
             self.stop()
-            self.is_session_finished = True
-
-    async def process_audio_file(self) -> None:
-        await self.process_audio_file_input(self.audio_file_path)
+            timer.end("session_start")
+            # 打印完整的性能摘要
+            timer.print_summary()
 
     async def process_text_input(self) -> None:
+        """处理文本输入"""
         await self.client.say_hello()
         await self.say_hello_over_event.wait()
-
-        """主逻辑：处理文本输入和WebSocket通信"""
-        # 确保连接最终关闭
+        
         try:
-            # 启动输入监听线程
             input_queue = queue.Queue()
             input_thread = threading.Thread(target=self.input_listener, args=(input_queue,), daemon=True)
             input_thread.start()
-            # 主循环：处理输入和上下文结束
+            
             while self.is_running:
                 try:
-                    # 检查是否有输入（非阻塞）
                     input_str = input_queue.get_nowait()
                     if input_str is None:
-                        # 输入流关闭
-                        if config.ENABLE_LOG:
-                            print("Input channel closed")
                         break
                     if input_str:
-                        # 发送输入内容
                         await self.client.chat_text_query(input_str)
                 except queue.Empty:
-                    # 无输入时短暂休眠
                     await asyncio.sleep(0.1)
                 except Exception as e:
                     if config.ENABLE_LOG:
@@ -346,10 +291,8 @@ class DialogSession:
             print("Start listening for input")
         try:
             while True:
-                # 读取标准输入（阻塞操作）
                 line = sys.stdin.readline()
                 if not line:
-                    # 输入流关闭
                     input_queue.put(None)
                     break
                 input_str = line.strip()
@@ -360,29 +303,52 @@ class DialogSession:
             input_queue.put(None)
 
     async def process_audio_file_input(self, audio_file_path: str) -> None:
-        timer.start("process_audio_file")
-        # 读取WAV文件
+        """处理音频文件输入"""
+        timer.start("audio_file_processing")
+        
+        # 记录音频文件处理开始
+        timer.start("audio_file_read")
+        
         with wave.open(audio_file_path, 'rb') as wf:
             chunk_size = config.input_audio_config["chunk"]
-            framerate = wf.getframerate()  # 采样率（如16000Hz）
-            # 时长 = chunkSize（帧数） ÷ 采样率（帧/秒）
+            framerate = wf.getframerate()
             sleep_seconds = chunk_size / framerate
+            
             if config.ENABLE_LOG:
                 print(f"开始处理音频文件: {audio_file_path}")
+                print(f"采样率: {framerate}Hz, 分块大小: {chunk_size}, 延迟时间: {sleep_seconds:.4f}s")
 
-            # 分块读取并发送音频数据
+            chunk_count = 0
+            total_audio_size = 0
+            
             while True:
                 audio_data = wf.readframes(chunk_size)
                 if not audio_data:
-                    break  # 文件读取完毕
-
+                    break
+                    
+                chunk_count += 1
+                total_audio_size += len(audio_data)
+                
+                # 记录单个音频块的发送时间
+                timer.start(f"audio_send_chunk_{chunk_count}", "audio_send")
+                
                 await self.client.task_request(audio_data)
-                # sleep与chunk对应的音频时长一致，模拟实时输入
+                
+                # 记录音频数据发送
+                timer.record_audio_data("audio_send", len(audio_data))
+                
+                # 结束当前块的发送计时
+                timer.end(f"audio_send_chunk_{chunk_count}", "audio_send")
+                
+                # 模拟实时输入的延迟
                 await asyncio.sleep(sleep_seconds)
 
+            timer.end("audio_file_read")
+            
             if config.ENABLE_LOG:
-                print(f"音频文件处理完成，等待服务器响应...")
-        timer.end("process_audio_file")
+                print(f"音频文件处理完成，共 {chunk_count} 个数据块，总大小: {total_audio_size} bytes")
+                
+        timer.end("audio_file_processing")
 
     async def process_silence_audio(self) -> None:
         """发送静音音频"""
@@ -390,98 +356,36 @@ class DialogSession:
         await self.client.task_request(silence_data)
 
     async def process_microphone_input(self) -> None:
-        timer.start("process_microphone")
+        """处理麦克风输入"""
         await self.client.say_hello()
         await self.say_hello_over_event.wait()
         await self.client.chat_text_query("你好，我也叫豆包")
 
-        """处理麦克风输入"""
         stream = self.audio_device.open_input_stream()
         if config.ENABLE_LOG:
             print("已打开麦克风，请讲话...")
 
+        audio_chunk_count = 0
+        
         while self.is_recording:
             try:
-                # 添加exception_on_overflow=False参数来忽略溢出错误
                 audio_data = stream.read(config.input_audio_config["chunk"], exception_on_overflow=False)
-                save_input_pcm_to_wav(audio_data, "input.pcm")
+                audio_chunk_count += 1
+                
+                # 记录麦克风音频输入
+                timer.record_audio_data("microphone_input", len(audio_data))
+                
+                # 记录单个音频块的发送时间
+                timer.start(f"mic_send_chunk_{audio_chunk_count}", "microphone_send")
+                
                 await self.client.task_request(audio_data)
-                await asyncio.sleep(0.01)  # 避免CPU过度使用
+                
+                # 结束当前块的发送计时
+                timer.end(f"mic_send_chunk_{audio_chunk_count}", "microphone_send")
+                
+                await asyncio.sleep(0.01)
+                
             except Exception as e:
                 if config.ENABLE_LOG:
                     print(f"读取麦克风数据出错: {e}")
-                await asyncio.sleep(0.1)  # 给系统一些恢复时间
-        timer.end("process_microphone")
-
-    async def start(self) -> None:
-        """启动对话会话"""
-        timer.start("session_start")
-        try:
-            await self.client.connect()
-
-            if self.mod == "text":
-                asyncio.create_task(self.process_text_input())
-                asyncio.create_task(self.receive_loop())
-                while self.is_running:
-                    await asyncio.sleep(0.1)
-            else:
-                if self.is_audio_file_input:
-                    asyncio.create_task(self.process_audio_file())
-                    await self.receive_loop()
-                else:
-                    asyncio.create_task(self.process_microphone_input())
-                    asyncio.create_task(self.receive_loop())
-                    while self.is_running:
-                        await asyncio.sleep(0.1)
-
-            await self.client.finish_session()
-            while not self.is_session_finished:
                 await asyncio.sleep(0.1)
-            await self.client.finish_connection()
-            await asyncio.sleep(0.1)
-            await self.client.close()
-            if config.ENABLE_LOG:
-                print(f"dialog request logid: {self.client.logid}, chat mod: {self.mod}")
-            save_output_to_file(self.audio_buffer, "output.pcm")
-
-            # 会话结束后，尝试把本次对话写入 Viking 记忆库
-            if self.memory_client is not None and self.conversation_messages:
-                try:
-                    await self.memory_client.add_session(self.session_id, self.conversation_messages)
-                    if config.ENABLE_LOG:
-                        print("memory archived")
-                except Exception as e:
-                    if config.ENABLE_LOG:
-                        print(f"memory archive failed: {e}")
-        except Exception as e:
-            if config.ENABLE_LOG:
-                print(f"会话错误: {e}")
-        finally:
-            if not self.is_audio_file_input:
-                self.audio_device.cleanup()
-            timer.end("session_start")
-            # 打印计时摘要
-            timer.print_summary()
-
-
-def save_input_pcm_to_wav(pcm_data: bytes, filename: str) -> None:
-    """保存PCM数据为WAV文件"""
-    with wave.open(filename, 'wb') as wf:
-        wf.setnchannels(config.input_audio_config["channels"])
-        wf.setsampwidth(2)  # paInt16 = 2 bytes
-        wf.setframerate(config.input_audio_config["sample_rate"])
-        wf.writeframes(pcm_data)
-
-
-def save_output_to_file(audio_data: bytes, filename: str) -> None:
-    """保存原始PCM音频数据到文件"""
-    if not audio_data:
-        if config.ENABLE_LOG:
-            print("No audio data to save.")
-        return
-    try:
-        with open(filename, 'wb') as f:
-            f.write(audio_data)
-    except IOError as e:
-        if config.ENABLE_LOG:
-            print(f"Failed to save pcm file: {e}")

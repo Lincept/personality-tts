@@ -2,7 +2,7 @@ import asyncio
 import argparse
 
 import config
-from audio_manager import DialogSession
+from audio_manager import AudioManager
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Real-time Dialog Client")
@@ -13,8 +13,9 @@ async def main() -> None:
 
     args = parser.parse_args()
 
-    session = DialogSession(ws_config=config.ws_connect_config, output_audio_format=args.format, audio_file_path=args.audio,mod=args.mod,recv_timeout=args.recv_timeout)
-    await session.start()
+    # 创建音频管理器实例
+    audio_manager = AudioManager(audio_file_path=args.audio, recv_timeout=args.recv_timeout)
+    await audio_manager.start()
 
 if __name__ == "__main__":
     asyncio.run(main())
