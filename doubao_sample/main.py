@@ -3,6 +3,7 @@ import argparse
 
 import config
 from audio_manager import DialogSession
+from logging_setup import setup_log_recording
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Real-time Dialog Client")
@@ -19,4 +20,14 @@ async def main() -> None:
     await session.start()
 
 if __name__ == "__main__":
+    # 可选：将运行日志写入 log/（不影响控制台输出）
+    # 在导入/运行其它逻辑前尽早启用，确保异常 traceback 也会被记录。
+    try:
+        setup_log_recording(
+            log_to_file=getattr(config, "LOG_TO_FILE", False),
+            log_dir=getattr(config, "LOG_DIR", "log"),
+            log_file=getattr(config, "LOG_FILE", "console.log"),
+        )
+    except Exception:
+        pass
     asyncio.run(main())

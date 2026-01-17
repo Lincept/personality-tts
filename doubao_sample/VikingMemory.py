@@ -129,7 +129,6 @@ def _truncate_items(items: List[Dict[str, str]], max_chars: int) -> str:
 async def build_external_rag_payload(
     memory_client: Any,
     query: str,
-    profile_cache: Optional[Any] = None,
     max_items: int = 3,
     max_chars: int = 3800,
 ) -> str:
@@ -139,21 +138,8 @@ async def build_external_rag_payload(
     """
     items: List[Dict[str, str]] = []
 
-    profile = profile_cache
-    if profile is None:
-        try:
-            profile = await memory_client.search_profile()
-        except Exception:
-            profile = None
-
-    if profile is not None:
-        items.append({
-            "title": "用户画像",
-            "content": _to_text(profile),
-        })
-
     try:
-        events = await memory_client.search_events_by_query(query, limit=2)
+        events = await memory_client.search_events_by_query(query, limit=max_items)
     except Exception:
         events = None
 
@@ -166,6 +152,5 @@ async def build_external_rag_payload(
     if not items:
         return "[]"
 
-    items = items[:max_items]
     return _truncate_items(items, max_chars)
 

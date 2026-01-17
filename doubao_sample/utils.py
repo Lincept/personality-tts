@@ -1,9 +1,10 @@
 import time
 from typing import Dict, List, Any
 import statistics
+import wave
 
 # 从config中导入计时开关配置
-from config import ENABLE_TIMER
+from config import ENABLE_TIMER, input_audio_config, ENABLE_LOG
 
 class Timer:
     """增强版计时模块，专注于语音实时输入输出性能监控"""
@@ -121,7 +122,7 @@ def normalize_messages(messages: Dict) -> List[Dict]:
     for _, v in messages.items():
         user_content = (v.get("user") or "").strip()
         assistant_content = (v.get("assistant") or "").strip()
-        if not user_content and not assistant_content:
+        if not user_content or not assistant_content:
             continue
         if user_content:
             target.append({
@@ -134,6 +135,27 @@ def normalize_messages(messages: Dict) -> List[Dict]:
                 "content": assistant_content
             })
     return target
+
+def save_input_pcm_to_wav(pcm_data: bytes, filename: str) -> None:
+    """保存PCM数据为WAV文件"""
+    with wave.open(filename, 'wb') as wf:
+        wf.setnchannels(input_audio_config["channels"])
+        wf.setsampwidth(2)  # paInt16 = 2 bytes
+        wf.setframerate(input_audio_config["sample_rate"])
+        wf.writeframes(pcm_data)
+
+def save_output_to_file(audio_data: bytes, filename: str) -> None:
+    """保存原始PCM音频数据到文件"""
+    if not audio_data:
+        if ENABLE_LOG:
+            print("No audio data to save.")
+        return
+    try:
+        with open(filename, 'wb') as f:
+            f.write(audio_data)
+    except IOError as e:
+        if ENABLE_LOG:
+            print(f"Failed to save pcm file: {e}")
 
 # 创建全局计时器实例
 timer = Timer()

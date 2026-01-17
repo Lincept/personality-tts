@@ -16,6 +16,12 @@ except Exception:
 # 配置信息
 # 日志控制开关 - 设置为False关闭所有日志输出
 ENABLE_LOG = True
+# 日志落盘开关 - 控制是否将 stdout/stderr 记录到 log 文件夹（不影响控制台显示）
+# 可通过 .env 配置：DOUBAO_LOG_TO_FILE=true
+LOG_TO_FILE = os.getenv("DOUBAO_LOG_TO_FILE", "false").strip().lower() == "true"
+# 日志目录与文件名（仅在 LOG_TO_FILE=true 时生效）
+LOG_DIR = os.getenv("DOUBAO_LOG_DIR", "log").strip() or "log"
+LOG_FILE = os.getenv("DOUBAO_LOG_FILE", "console.log").strip() or "console.log"
 # 计时功能开关 - 设置为True启用计时功能
 ENABLE_TIMER = False
 
@@ -50,7 +56,7 @@ start_session_req = {
         },
     },
     "dialog": {
-        "bot_name": "豆包",
+        "bot_name": "小雨",
         "system_role": "你使用活泼灵动的女声，性格开朗，热爱生活。",
         "speaking_style": "你的说话风格简洁明了，语速适中，语调自然。",
         # "character_manifest": "外貌与穿着\n26岁，短发干净利落，眉眼分明，笑起来露出整齐有力的牙齿。体态挺拔，肌肉线条不夸张但明显。常穿简单的衬衫或夹克，看似随意，但每件衣服都干净整洁，给人一种干练可靠的感觉。平时冷峻，眼神锐利，专注时让人不自觉紧张。\n\n性格特点\n平时话不多，不喜欢多说废话，通常用"嗯"或者短句带过。但内心极为细腻，特别在意身边人的感受，只是不轻易表露。嘴硬是常态，"少管我"是他的常用台词，但会悄悄做些体贴的事情，比如把对方喜欢的饮料放在手边。战斗或训练后常说"没事"，但动作中透露出疲惫，习惯用小动作缓解身体酸痛。\n性格上坚毅果断，但不会冲动，做事有条理且有原则。\n\n常用表达方式与口头禅\n\t•\t认可对方时：\n"行吧，这次算你靠谱。"（声音稳重，手却不自觉放松一下，心里松口气）\n\t•\t关心对方时：\n"快点回去，别磨蹭。"（语气干脆，但眼神一直追着对方的背影）\n\t•\t想了解情况时：\n"刚刚……你看到那道光了吗？"（话语随意，手指敲着桌面，但内心紧张，小心隐藏身份）",

@@ -14,7 +14,7 @@ import pyaudio
 import config
 from realtime_dialog_client import RealtimeDialogClient
 from VikingMemory import VikingMemory, build_external_rag_payload
-from utils import timer, normalize_messages
+from utils import timer, normalize_messages, save_input_pcm_to_wav, save_output_to_file
 
 
 @dataclass
@@ -78,12 +78,8 @@ class DialogSession:
         self.use_memory = use_memory
         if self.use_memory:
             self.memory_client = VikingMemory()
-            self.current_question_id = ""
+            self.current_input = ""
             self.message_pairs = {}
-            self.wait_question_ack = asyncio.Event()
-            self.wait_question_ack.clear()
-            self.profile_cache = None
-            self.last_asr_text = ""
             self.memory_injected = False
         self.audio_file_path = audio_file_path
         self.recv_timeout = recv_timeout
@@ -105,7 +101,7 @@ class DialogSession:
         self.is_running = True
         self.is_session_finished = False
         self.is_user_querying = False
-        self.is_sending_chat_tts_text = False
+        self.is_sending_tts_or_rag = False
         self.audio_buffer = b''
 
         signal.signal(signal.SIGINT, self._keyboard_signal)
@@ -123,15 +119,6 @@ class DialogSession:
             self.player_thread = threading.Thread(target=self._audio_player_thread)
             self.player_thread.daemon = True
             self.player_thread.start()
-
-    def _ensure_message_pair(self, question_id: Optional[str]) -> str:
-        message_id = question_id or self.current_question_id or self.fallback_message_id
-        if message_id not in self.message_pairs:
-            self.message_pairs[message_id] = {
-                "user": "",
-                "assistant": ""
-            }
-        return message_id
 
     def _audio_player_thread(self):
         """音频播放线程"""
@@ -153,11 +140,9 @@ class DialogSession:
         if response == {}:
             return
         """处理服务器响应"""
-        if response['message_type'] == 'SERVER_ACK' and isinstance(response.get('payload_msg'), bytes):
-            # if config.ENABLE_LOG:
-            #     print(f"\n接收到音频数据: {len(response['payload_msg'])} 字节")
-            if self.is_sending_chat_tts_text:
-                return
+        if response['message_type'] == 'SERVER_ACK' and isinstance(response.get('payload_msg'), bytes) and not self.is_sending_tts_or_rag:
+            if config.ENABLE_LOG:
+                print(f"\n接收到音频数据: {len(response['payload_msg'])} 字节")
             audio_data = response['payload_msg']
             if not self.is_audio_file_input:
                 self.audio_queue.put(audio_data)
@@ -176,46 +161,54 @@ class DialogSession:
                         self.audio_queue.get_nowait()
                     except queue.Empty:
                         continue
+                # 打断
                 self.is_user_querying = True
 
-            if event == 350 and self.is_sending_chat_tts_text and payload_msg.get("tts_type") in ["chat_tts_text", "external_rag"]:
-                while not self.audio_queue.empty():
-                    try:
-                        self.audio_queue.get_nowait()
-                    except queue.Empty:
-                        continue
-                self.is_sending_chat_tts_text = False
-
-            if event == 459:
-                self.is_user_querying = False
-                if self.use_memory and self.last_asr_text:
-                    asyncio.create_task(self.trigger_rag_for_query(self.last_asr_text))
-                    self.last_asr_text = ""
-
-            if event == 553 and self.use_memory:
-                question_id = payload_msg.get("question_id")
-                if question_id:
-                    self.current_question_id = question_id
-                    self._ensure_message_pair(question_id)
-                    self.wait_question_ack.set()
-            
-            if event == 550 and self.use_memory:
-                content = payload_msg.get("content") or ""
-                message_id = self._ensure_message_pair(payload_msg.get("question_id"))
-                if content:
-                    self.message_pairs[message_id]["assistant"] += content
+            if event == 350:
+                tts_type = payload_msg.get("tts_type")
+                # 原始闲聊不合适，默认只走RAG
+                if tts_type in ["default"] and self.is_sending_tts_or_rag:
+                    while not self.audio_queue.empty():
+                        try:
+                            self.audio_queue.get_nowait()
+                        except queue.Empty:
+                            continue
+                elif tts_type in ["external_rag", "chat_tts_text"]:
+                    # 当为RAG和GTA的时候，接收音频
+                    self.is_sending_tts_or_rag = False
+                    if self.use_memory:
+                        reply_id = payload_msg.get("reply_id")
+                        if reply_id:
+                            self.message_pairs[reply_id] = {
+                                "user": self.current_input,
+                                "assistant": ""
+                            }
 
             if event == 451 and self.use_memory:
                 results = payload_msg.get("results", [])
-                for item in results:
-                    if not item.get("is_interim"):
-                        self.last_asr_text = item.get("text", "")
-                        if self.last_asr_text:
-                            message_id = self._ensure_message_pair(payload_msg.get("question_id"))
-                            if self.message_pairs[message_id]["user"]:
-                                self.message_pairs[message_id]["user"] += f"\n{self.last_asr_text}"
-                            else:
-                                self.message_pairs[message_id]["user"] = self.last_asr_text
+                extra = payload_msg.get("extra")
+                if "endpoint" not in extra or bool(extra["endpoint"]) != True:
+                    return
+                # 用户说完话了，默认加入RAG，且不接收default音频
+                self.current_input = results[0]["text"]
+                print(f"current inputcurrent input: {self.current_input}")
+                self.is_sending_tts_or_rag = True
+                asyncio.create_task(self.trigger_rag_for_query(self.current_input))
+
+            if event == 459:
+                # 解除打断
+                self.is_user_querying = False
+
+            if event == 553 and self.use_memory:
+                self.is_sending_tts_or_rag = True
+                asyncio.create_task(self.trigger_rag_for_query(self.current_input))
+
+            if event == 550 and self.use_memory:
+                content = payload_msg.get("content")
+                reply_id = payload_msg.get("reply_id")
+                if content and reply_id in self.message_pairs:
+                    self.message_pairs[reply_id]["assistant"] += content
+                
 
         elif response['message_type'] == 'SERVER_ERROR':
             if config.ENABLE_LOG:
@@ -249,11 +242,11 @@ class DialogSession:
         if not self.use_memory or self.memory_injected:
             return
         try:
-            self.profile_cache = await self.memory_client.search_profile()
-            recent_events = await self.memory_client.search_recent_events(1, 3)
+            profile = await self.memory_client.search_profile()
+            recent_events = await self.memory_client.search_recent_events(1, 2)
             memory_summary = (
                 "已知用户画像与近期事件（仅用于对话参考）：\n"
-                f"Profile: {self.profile_cache}\n"
+                f"Profile: {profile}\n"
                 f"RecentEvents: {recent_events}"
             )
             items = [
@@ -272,20 +265,10 @@ class DialogSession:
         external_rag = await build_external_rag_payload(
             memory_client=self.memory_client,
             query=query,
-            profile_cache=self.profile_cache,
+            max_items=2,
         )
         if external_rag and external_rag != "[]":
-            await self.client.chat_rag_text(False, external_rag)
-
-    def _keyboard_signal(self, sig, frame):
-        if config.ENABLE_LOG:
-            print(f"receive keyboard Ctrl+C")
-        self.stop()
-
-    def stop(self):
-        self.is_recording = False
-        self.is_playing = False
-        self.is_running = False
+            await self.client.chat_rag_text(self.is_user_querying, external_rag)
 
     async def receive_loop(self):
         try:
@@ -306,7 +289,7 @@ class DialogSession:
                     else:
                         if not self.say_hello_over_event.is_set():
                             if config.ENABLE_LOG:
-                                print(f"receive tts sayhello ended event")
+                                print(f"SayHello over, input loop start...")
                             self.say_hello_over_event.set()
                         if self.mod == "text":
                             if config.ENABLE_LOG:
@@ -321,9 +304,6 @@ class DialogSession:
         finally:
             self.stop()
             self.is_session_finished = True
-
-    async def process_audio_file(self) -> None:
-        await self.process_audio_file_input(self.audio_file_path)
 
     async def process_text_input(self) -> None:
         await self.client.say_hello()
@@ -347,14 +327,9 @@ class DialogSession:
                         break
                     if input_str:
                         if self.use_memory:
-                            await self.client.chat_text_query(input_str)
-                            await self.wait_question_ack.wait()
-                            self.message_pairs[self.current_question_id]["user"] = input_str
-                            self.wait_question_ack.clear()
-                            await self.trigger_rag_for_query(input_str)
-                        else:
-                            # 发送输入内容
-                            await self.client.chat_text_query(input_str)
+                            self.current_input = input_str
+                        # 发送输入内容
+                        await self.client.chat_text_query(input_str)
                 except queue.Empty:
                     # 无输入时短暂休眠
                     await asyncio.sleep(0.1)
@@ -368,8 +343,6 @@ class DialogSession:
 
     def input_listener(self, input_queue: queue.Queue) -> None:
         """在单独线程中监听标准输入"""
-        if config.ENABLE_LOG:
-            print("Start listening for input")
         try:
             while True:
                 # 读取标准输入（阻塞操作）
@@ -384,6 +357,34 @@ class DialogSession:
             if config.ENABLE_LOG:
                 print(f"Input listener error: {e}")
             input_queue.put(None)
+
+    def _keyboard_signal(self, sig, frame):
+        if config.ENABLE_LOG:
+            print(f"receive keyboard Ctrl+C")
+        self.stop()
+
+    async def process_microphone_input(self) -> None:
+        timer.start("process_microphone")
+        await self.client.say_hello()
+        await self.say_hello_over_event.wait()
+
+        """处理麦克风输入"""
+        stream = self.audio_device.open_input_stream()
+        if config.ENABLE_LOG:
+            print("已打开麦克风，请讲话...")
+
+        while self.is_recording:
+            try:
+                # 添加exception_on_overflow=False参数来忽略溢出错误
+                audio_data = stream.read(config.input_audio_config["chunk"], exception_on_overflow=False)
+                save_input_pcm_to_wav(audio_data, "data/input.pcm")
+                await self.client.task_request(audio_data)
+                await asyncio.sleep(0.01)  # 避免CPU过度使用
+            except Exception as e:
+                if config.ENABLE_LOG:
+                    print(f"读取麦克风数据出错: {e}")
+                await asyncio.sleep(0.1)  # 给系统一些恢复时间
+        timer.end("process_microphone")
 
     async def process_audio_file_input(self, audio_file_path: str) -> None:
         timer.start("process_audio_file")
@@ -415,29 +416,6 @@ class DialogSession:
         silence_data = b'\x00' * 320
         await self.client.task_request(silence_data)
 
-    async def process_microphone_input(self) -> None:
-        timer.start("process_microphone")
-        await self.client.say_hello()
-        await self.say_hello_over_event.wait()
-
-        """处理麦克风输入"""
-        stream = self.audio_device.open_input_stream()
-        if config.ENABLE_LOG:
-            print("已打开麦克风，请讲话...")
-
-        while self.is_recording:
-            try:
-                # 添加exception_on_overflow=False参数来忽略溢出错误
-                audio_data = stream.read(config.input_audio_config["chunk"], exception_on_overflow=False)
-                save_input_pcm_to_wav(audio_data, "data/input.pcm")
-                await self.client.task_request(audio_data)
-                await asyncio.sleep(0.01)  # 避免CPU过度使用
-            except Exception as e:
-                if config.ENABLE_LOG:
-                    print(f"读取麦克风数据出错: {e}")
-                await asyncio.sleep(0.1)  # 给系统一些恢复时间
-        timer.end("process_microphone")
-
     async def start(self) -> None:
         """启动对话会话"""
         timer.start("session_start")
@@ -454,7 +432,7 @@ class DialogSession:
                     await asyncio.sleep(0.1)
             else:
                 if self.is_audio_file_input:
-                    asyncio.create_task(self.process_audio_file())
+                    asyncio.create_task(self.process_audio_file_input(self.audio_file_path))
                     await self.receive_loop()
                 else:
                     asyncio.create_task(self.process_microphone_input())
@@ -467,7 +445,11 @@ class DialogSession:
                 # print()
                 # pprint.pprint(self.message_pairs, indent=4)
                 # print()
-                await self.memory_client.save_memory(self.session_id, messages=normalize_messages(self.message_pairs))
+                nms = normalize_messages(self.message_pairs)
+                if config.ENABLE_LOG:
+                    print(f"Upload Messages for memory length: {len(nms)}")
+                    print(f"Upload Message Contents: {nms}")
+                await self.memory_client.save_memory(self.session_id, messages=nms)
 
             await self.client.finish_session()
             while not self.is_session_finished:
@@ -481,6 +463,9 @@ class DialogSession:
         except Exception as e:
             if config.ENABLE_LOG:
                 print(f"会话错误: {e}")
+            self.stop()
+            await asyncio.sleep(1)
+            sys.exit(1)
         finally:
             if not self.is_audio_file_input:
                 self.audio_device.cleanup()
@@ -488,25 +473,7 @@ class DialogSession:
             # 打印计时摘要
             timer.print_summary()
 
-
-def save_input_pcm_to_wav(pcm_data: bytes, filename: str) -> None:
-    """保存PCM数据为WAV文件"""
-    with wave.open(filename, 'wb') as wf:
-        wf.setnchannels(config.input_audio_config["channels"])
-        wf.setsampwidth(2)  # paInt16 = 2 bytes
-        wf.setframerate(config.input_audio_config["sample_rate"])
-        wf.writeframes(pcm_data)
-
-
-def save_output_to_file(audio_data: bytes, filename: str) -> None:
-    """保存原始PCM音频数据到文件"""
-    if not audio_data:
-        if config.ENABLE_LOG:
-            print("No audio data to save.")
-        return
-    try:
-        with open(filename, 'wb') as f:
-            f.write(audio_data)
-    except IOError as e:
-        if config.ENABLE_LOG:
-            print(f"Failed to save pcm file: {e}")
+    def stop(self):
+        self.is_recording = False
+        self.is_playing = False
+        self.is_running = False

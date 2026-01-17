@@ -9,6 +9,7 @@
 - ASR/TTS：`start_session_req.asr`、`start_session_req.tts`（`speaker`、采样率）
 - 音频采集/播放：`input_audio_config`、`output_audio_config`
 - 记忆库：`VIKINGDB_*`（仅在 `--memory` 开启时使用）
+- 日志落盘：通过 `.env` 控制是否将控制台输出写入 `log/` 目录
 
 ## 配置指导（简要）
 
@@ -24,6 +25,14 @@ cp .env.example .env
 
 - `DOUBAO_APP_ID`
 - `DOUBAO_ACCESS_KEY`
+
+（可选）日志写入 `log/`：
+
+```dotenv
+DOUBAO_LOG_TO_FILE=true
+DOUBAO_LOG_DIR=log
+DOUBAO_LOG_FILE=console.log
+```
 
 2) 语音与角色
 

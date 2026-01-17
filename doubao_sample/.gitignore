@@ -3,3 +3,5 @@ data/*.wav
 *.pcm
 *.wav
 .env
+log/
+*.log
