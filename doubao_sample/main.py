@@ -12,11 +12,12 @@ async def main() -> None:
     parser.add_argument("--audio", type=str, default="", help="audio file send to server, if not set, will use microphone input.")
     parser.add_argument("--recv_timeout", type=int, default=10, help="Timeout for receiving messages,value range [10,120]")
     parser.add_argument("--memory", action="store_true", help="Use memory or not, if not set, will be True")
+    parser.add_argument("--aec", action="store_true", help="Enable AEC (Acoustic Echo Cancellation) for audio processing")
 
     args = parser.parse_args()
 
     # 创建音频管理器实例
-    session = DialogSession(ws_config=config.ws_connect_config, output_audio_format=args.format, audio_file_path=args.audio,mod=args.mod,recv_timeout=args.recv_timeout,use_memory=args.memory)
+    session = DialogSession(ws_config=config.ws_connect_config, output_audio_format=args.format, audio_file_path=args.audio,mod=args.mod,recv_timeout=args.recv_timeout,use_memory=args.memory,use_aec=args.aec)
     await session.start()
 
 if __name__ == "__main__":

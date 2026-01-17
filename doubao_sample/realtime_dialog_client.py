@@ -196,6 +196,10 @@ class RealtimeDialogClient:
     async def receive_server_response(self) -> Dict[str, Any]:
         timer.start("receive_server_response")
         try:
+            # 检查连接是否存在
+            if self.ws is None:
+                raise Exception("WebSocket connection is not initialized")
+            
             response = await self.ws.recv()
             data = protocol.parse_response(response)
             timer.end("receive_server_response")

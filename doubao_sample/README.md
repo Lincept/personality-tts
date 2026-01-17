@@ -101,3 +101,45 @@ pip install -r requirements.txt
    ```bash
    python main.py --memory
    ```
+启用 AEC（回声消除）：
+   ```bash
+   python main.py --aec
+   ```
+组合使用（启用记忆存储和 AEC）：
+   ```bash
+   python main.py --memory --aec
+   ```
+
+### AEC（回声消除）功能说明
+
+AEC（Acoustic Echo Cancellation，回声消除）功能可以消除语音助手播放声音时产生的回声，提高语音识别准确度。
+
+**使用要求：**
+- 目前仅支持 macOS 平台
+- 需要 WebRTC 音频处理库（已包含在 `aec/` 目录中）
+- 使用 16kHz 采样率的音频输入
+
+**使用方法：**
+```bash
+# 启用 AEC
+python main.py --aec
+
+# 可与其他参数组合使用
+python main.py --aec --memory
+```
+
+**原理说明：**
+- AEC 处理器会接收两路信号：
+  1. 参考信号（扬声器播放的声音）
+  2. 麦克风采集的信号（包含用户语音 + 回声）
+- 通过 WebRTC 算法消除麦克风信号中的回声部分
+- 输出干净的用户语音信号
+
+**配置要求：**
+- 输入音频（麦克风）：16kHz, int16 格式
+- 输出音频（扬声器）：支持 16k/24k/48kHz，支持 int16/float32 格式（会自动转换）
+
+**注意事项：**
+- 在非 macOS 平台上使用 `--aec` 参数会显示警告但不影响程序正常运行
+- 如果 AEC 初始化失败，程序会自动回退到不使用 AEC 的模式
+- AEC 处理会增加轻微的延迟（约 40ms）

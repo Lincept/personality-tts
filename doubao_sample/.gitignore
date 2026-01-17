@@ -5,3 +5,6 @@ data/*.wav
 .env
 log/
 *.log
+third_party/
+test/
+aec/libwebrtc_apm.dylib

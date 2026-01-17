@@ -39,6 +39,10 @@ class VikingMemory:
             # "group_id": "",
             "time": now_ts,
         }
+        from pprint import pprint
+        print("================================================================")
+        pprint(messages)
+        print("================================================================")
         # Add session messages
         session_info = await self.collection.async_add_session(
             session_id = session_id,

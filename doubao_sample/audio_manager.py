@@ -74,8 +74,10 @@ class DialogSession:
     mod: str
 
     def __init__(self, ws_config: Dict[str, Any], output_audio_format: str = "pcm", audio_file_path: str = "",
-                 mod: str = "audio", recv_timeout: int = 10, use_memory: bool = False):
+                 mod: str = "audio", recv_timeout: int = 10, use_memory: bool = False, use_aec: bool = False):
         self.use_memory = use_memory
+        self.use_aec = use_aec
+        self.aec_processor = None
         if self.use_memory:
             self.memory_client = VikingMemory()
             self.current_input = ""
@@ -113,6 +115,21 @@ class DialogSession:
             )
             # 初始化音频队列和输出流
             self.output_stream = self.audio_device.open_output_stream()
+            
+            # 初始化 AEC 处理器（如果启用）
+            if self.use_aec:
+                try:
+                    from aec.aec_processor import WebRTCAECProcessor
+                    self.aec_processor = WebRTCAECProcessor(
+                        sample_rate=config.input_audio_config["sample_rate"]
+                    )
+                    if config.ENABLE_LOG:
+                        print("✅ AEC 处理器已初始化")
+                except Exception as e:
+                    if config.ENABLE_LOG:
+                        print(f"⚠️ AEC 初始化失败: {e}")
+                    self.aec_processor = None
+            
             # 启动播放线程
             self.is_recording = True
             self.is_playing = True
@@ -127,6 +144,40 @@ class DialogSession:
                 # 从队列获取音频数据
                 audio_data = self.audio_queue.get(timeout=1.0)
                 if audio_data is not None:
+                    # 如果启用 AEC，将播放的音频作为参考信号
+                    if self.use_aec and self.aec_processor:
+                        try:
+                            import numpy as np
+                            
+                            # 根据输出音频格式转换数据
+                            output_format = config.output_audio_config["bit_size"]
+                            output_sample_rate = config.output_audio_config["sample_rate"]
+                            input_sample_rate = config.input_audio_config["sample_rate"]
+                            
+                            if output_format == pyaudio.paFloat32:
+                                # float32 格式：范围 [-1.0, 1.0]
+                                audio_array = np.frombuffer(audio_data, dtype=np.float32)
+                                # 转换为 int16：范围 [-32768, 32767]，需要 clip 防止溢出
+                                audio_array = np.clip(audio_array * 32768.0, -32768, 32767).astype(np.int16)
+                            elif output_format == pyaudio.paInt16:
+                                # int16 格式：直接使用
+                                audio_array = np.frombuffer(audio_data, dtype=np.int16)
+                            else:
+                                raise ValueError(f"不支持的音频格式: {output_format}")
+                            
+                            # 如果采样率不匹配，需要重采样
+                            if output_sample_rate != input_sample_rate:
+                                # 简单的降采样：每隔 n 个样本取一个
+                                # 24000 -> 16000: 取样比例 = 16000/24000 = 2/3
+                                downsample_ratio = input_sample_rate / output_sample_rate
+                                indices = np.arange(0, len(audio_array), 1/downsample_ratio).astype(int)
+                                audio_array = audio_array[indices[:int(len(audio_array) * downsample_ratio)]]
+                            
+                            self.aec_processor.add_reference(audio_array)
+                        except Exception as e:
+                            if config.ENABLE_LOG:
+                                print(f"⚠️ AEC 参考信号添加失败: {e}")
+                    
                     self.output_stream.write(audio_data)
             except queue.Empty:
                 # 队列为空时等待一小段时间
@@ -377,6 +428,26 @@ class DialogSession:
             try:
                 # 添加exception_on_overflow=False参数来忽略溢出错误
                 audio_data = stream.read(config.input_audio_config["chunk"], exception_on_overflow=False)
+                
+                # 如果启用 AEC，对麦克风输入进行处理
+                if self.use_aec and self.aec_processor:
+                    try:
+                        import numpy as np
+                        # 将音频数据转换为 numpy 数组（输入是 int16 格式）
+                        input_format = config.input_audio_config["bit_size"]
+                        if input_format == pyaudio.paInt16:
+                            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+                            # 应用 AEC 处理
+                            processed_array = self.aec_processor.process(audio_array)
+                            # 转换回 bytes
+                            audio_data = processed_array.tobytes()
+                        else:
+                            if config.ENABLE_LOG:
+                                print(f"⚠️ AEC 仅支持 int16 输入格式，当前格式: {input_format}")
+                    except Exception as e:
+                        if config.ENABLE_LOG:
+                            print(f"⚠️ AEC 处理失败，使用原始音频: {e}")
+                
                 save_input_pcm_to_wav(audio_data, "data/input.pcm")
                 await self.client.task_request(audio_data)
                 await asyncio.sleep(0.01)  # 避免CPU过度使用
