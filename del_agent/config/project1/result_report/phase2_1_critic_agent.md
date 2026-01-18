@@ -2,7 +2,8 @@
 
 ## 📋 执行概览
 
-**执行日期**: 2024年（Phase 2.1 完成）  
+**当前版本**: 2.2.1  
+**执行日期**: 2024年（Phase 2.1 完成），2026-01-19（v2.2.1 更新）  
 **负责模块**: 判别节点智能体  
 **对应需求**: req1.md - Phase 2 后端数据工厂  
 **对应计划**: del1.md - Step 2.1: 判别节点智能体
@@ -16,7 +17,7 @@
 ### 核心功能要求
 1. **质量评估**: 接收 Agent 输出 + 原始输入，判断是否符合质量标准
 2. **反馈生成**: 返回结构化的 `CriticFeedback`（是否通过、评估理由、改进建议、置信度）
-3. **严格度控制**: 支持动态调整评估严格度（0.0-1.0）
+3. **严格度控制**: 支持动态调整评估严格度（0.0-1.0），支持动态提示词生成
 4. **批量处理**: 支持批量评估多个输出
 5. **集成接口**: 与 VerificationLoop 和 BaseAgent 无缝集成
 
@@ -28,20 +29,24 @@
 
 #### 1.1 核心实现：`agents/critic.py`
 **文件路径**: [agents/critic.py](../../agents/critic.py)  
-**代码行数**: ~350 行  
+**代码行数**: ~380 行  
 **功能描述**:
 
 - **CriticAgent 类** (继承 BaseAgent)
   - `evaluate()` 方法: 评估单个 Agent 输出质量
   - `batch_evaluate()` 方法: 批量评估多个输出
-  - `set_strictness_level()` 方法: 动态调整严格度
+  - `set_strictness_level()` 方法: 动态调整严格度（支持重新生成提示词）
   - `format_evaluation_summary()` 方法: 生成评估摘要
+  - `_generate_dynamic_prompt()` 方法: 动态生成提示词 (v2.2.1)
+  - `_apply_dynamic_prompt()` 方法: 应用动态提示词 (v2.2.1)
 
-- **严格度等级系统**
+- **严格度等级系统** (v2.2.1 扩展为5级)
   ```python
-  0.0-0.5: 宽松（允许较大偏差，重点检查基本正确性）
-  0.6-0.8: 标准（正常质量要求，检查准确性和完整性）
-  0.9-1.0: 严格（要求近乎完美，细致检查所有细节）
+  0.0-0.3: 极度宽松（通过阈值40分）
+  0.4-0.6: 宽松（通过阈值60分）
+  0.7-0.8: 标准（通过阈值75分）
+  0.9-0.95: 严格（通过阈值85分）
+  0.96-1.0: 极度严格（通过阈值95分）
   ```
 
 - **评估维度及权重**
@@ -53,12 +58,17 @@
   ```
 
 - **关键特性**
+  - 支持静态和动态提示词模式
   - 基于 Pydantic 的严格类型验证
-  - 支持条件导入（兼容不同运行环境）
   - 完整的日志记录和错误处理
-  - 与 LLMProvider 无缝集成
+  - 与 LLMProvider 和 StrictnessPromptGenerator 无缝集成
 
-#### 1.2 提示词模板：`prompts/templates/critic.yaml`
+#### 1.2 严格度提示词生成器：`agents/strictness_prompt_generator.py` (v2.2.1新增)
+**文件路径**: [agents/strictness_prompt_generator.py](../../agents/strictness_prompt_generator.py)  
+**代码行数**: ~300 行  
+**功能描述**: 根据严格度参数动态生成适配的 Critic 提示词
+
+#### 1.3 提示词模板：`prompts/templates/critic.yaml`
 **文件路径**: [prompts/templates/critic.yaml](../../prompts/templates/critic.yaml)  
 **模板结构**:
 
@@ -89,9 +99,15 @@ user_prompt: |
     "suggestions": "改进建议（可选）",
     "confidence_score": 0.0-1.0
   }
-```
+#### 1.3 提示词模板：`prompts/templates/critic.yaml`
+**文件路径**: [prompts/templates/critic.yaml](../../prompts/templates/critic.yaml)  
+**模板结构**: 静态提示词模板，定义评审专家角色和评估维度
 
-#### 1.3 单元测试：`tests/test_critic.py`
+#### 1.4 提示词模板：`prompts/templates/strictness_prompt_generator.yaml` (v2.2.1新增)
+**文件路径**: [prompts/templates/strictness_prompt_generator.yaml](../../prompts/templates/strictness_prompt_generator.yaml)  
+**模板结构**: 严格度提示词生成器模板，包含5级分级体系和调整技巧
+
+#### 1.5 单元测试：`tests/test_critic.py`
 **文件路径**: [tests/test_critic.py](../../tests/test_critic.py)  
 **测试覆盖**: 9 个测试用例，100% 通过
 
@@ -488,6 +504,25 @@ Phase 2.1 成功实现了判别节点智能体（CriticAgent），为 del_agent 
 6. ✅ **良好的代码质量**: 100% 类型注解 + 文档字符串
 
 **Phase 2.1 验收通过，可以继续 Phase 2.2 的实施！** 🚀
+
+---
+
+## 📚 版本历史
+
+### v2.1.0 (原始实现)
+- 静态提示词评估（`_get_strictness_description()` 方法）
+- 3级严格度分级（宽松/标准/严格）
+- 4个评估维度（事实准确性、信息完整性、格式正确性、一致性）
+
+### v2.2.1 (当前版本, 2026-01-19)
+**主要更新**:
+- 新增 `StrictnessPromptGenerator` Agent（动态提示词生成）
+- 扩展为5级严格度分级（极度宽松/宽松/标准/严格/极度严格）
+- `CriticAgent` 新增 `use_dynamic_prompt` 参数
+- 新增方法: `_generate_dynamic_prompt()`, `_apply_dynamic_prompt()`
+- `set_strictness_level()` 支持重新生成提示词
+
+**改进点**: 动态提示词适配、更细致的严格度控制、明确的通过阈值
 
 ---
 

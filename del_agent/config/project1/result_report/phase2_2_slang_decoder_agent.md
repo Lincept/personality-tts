@@ -2,6 +2,7 @@
 
 ## 📋 执行概览
 
+**当前版本**: 2.2.1  
 **执行日期**: 2026年1月19日  
 **负责模块**: 黑话解码智能体  
 **对应需求**: req1.md - Phase 2 后端数据工厂  
@@ -16,7 +17,7 @@
 ### 核心功能要求
 1. **黑话识别**: 识别评论中的网络黑话、学术术语、隐喻表达
 2. **标准翻译**: 将黑话翻译为标准、易懂的表达
-3. **词典管理**: 维护动态的黑话词典，支持持久化存储
+3. **词典管理**: 维护动态的黑话词典，支持多种存储后端（JSON/Mem0）
 4. **词典更新**: 自动学习新识别的黑话并更新词典
 5. **批量处理**: 支持批量解码多条评论
 6. **语义保留**: 保留原文的语义和情感色彩
@@ -49,13 +50,11 @@ class SlangDecodingResult(BaseModel):
 
 #### 2.1 核心实现：`agents/slang_decoder.py`
 **文件路径**: [agents/slang_decoder.py](../../agents/slang_decoder.py)  
-**代码行数**: ~370 行  
+**代码行数**: ~330 行  
 **功能描述**:
 
 - **SlangDecoderAgent 类** (继承 BaseAgent)
-  - `__init__()`: 初始化词典路径、自动保存选项
-  - `_load_slang_dict()`: 从JSON文件加载黑话词典
-  - `_save_slang_dict()`: 保存黑话词典到文件
+  - `__init__()`: 初始化词典存储（支持 JSON/Mem0 后端）
   - `update_dictionary()`: 动态更新黑话词典
   - `decode_batch()`: 批量解码多条文本
   - `get_dictionary_stats()`: 获取词典统计信息
@@ -63,13 +62,23 @@ class SlangDecodingResult(BaseModel):
   - `clear_dictionary()`: 清空词典
 
 - **关键特性**
-  - **持久化存储**: 支持从JSON文件加载和保存词典
-  - **自动保存**: 识别到新黑话时自动更新文件
-  - **条件导入**: 兼容不同运行环境
-  - **错误处理**: 完整的异常捕获和日志记录
+  - **多后端支持**: 支持 JSON 文件和 Mem0 向量存储
+  - **语义检索**: Mem0 后端支持语义搜索
+  - **自动保存**: 识别到新黑话时自动更新
+  - **向后兼容**: 保持原有 API 不变
   - **批量处理**: 支持批量解码并可选启用核验循环
 
-#### 2.2 提示词模板：`prompts/templates/slang_decoder.yaml`
+#### 2.2 词典存储框架：`core/dictionary_store.py` (v2.2.1新增)
+**文件路径**: [core/dictionary_store.py](../../core/dictionary_store.py)  
+**代码行数**: ~580 行  
+**功能描述**:
+
+- **DictionaryStore** 抽象接口
+- **JSONDictionaryStore** JSON 文件存储实现
+- **Mem0DictionaryStore** Mem0 向量存储实现
+- **create_dictionary_store()** 工厂方法
+
+#### 2.3 提示词模板：`prompts/templates/slang_decoder.yaml`
 **文件路径**: [prompts/templates/slang_decoder.yaml](../../prompts/templates/slang_decoder.yaml)  
 **模板结构**:
 
@@ -84,23 +93,28 @@ class SlangDecodingResult(BaseModel):
 - 提供JSON格式示例
 - 强调输出要求和注意事项
 
-**内置黑话示例**:
-```yaml
-常见学术黑话:
-- "学术妲己": 善于承诺但不兑现的导师
-- "画饼": 做出承诺但不实现
-- "学术黑厂": 压榨学生、工作环境恶劣的实验室
-- "鸽子王": 经常爽约、不守信用
-- "PPT吹得天花乱坠": 宣传时夸大其词
-- "放养": 导师很少指导
-- "内卷": 过度竞争导致效率低下
-- "PUA": 精神控制、打压学生
-... (共17个示例)
-```
+#### 2.3 提示词模板：`prompts/templates/slang_decoder.yaml`
+**文件路径**: [prompts/templates/slang_decoder.yaml](../../prompts/templates/slang_decoder.yaml)  
+**模板结构**:
 
-#### 2.3 单元测试：`tests/test_slang_decoder.py`
+**系统提示词特点**:
+- 定义解码专家角色
+- 列举常见学术黑话（17个示例）
+- 明确4大解码原则（准确性、完整性、可读性、保真性）
+
+**用户提示词特点**:
+- 展示待解码文本和已知词典
+- 明确3步任务流程
+- 提供JSON格式示例
+- 强调输出要求和注意事项
+
+#### 2.4 单元测试：`tests/test_slang_decoder.py`
 **文件路径**: [tests/test_slang_decoder.py](../../tests/test_slang_decoder.py)  
 **测试覆盖**: 9 个测试用例，100% 通过
+
+#### 2.5 Mem0 框架集成：`memory/` (v2.2.1新增)
+**文件路径**: [memory/](../../memory/)  
+**功能描述**: 从 `src/memory/` 迁移的 Mem0 框架，用于支持 Mem0 后端词典存储
 
 ---
 
@@ -641,6 +655,25 @@ Phase 2.2 成功实现了黑话解码智能体（SlangDecoderAgent），为 del_
 8. ✅ **优化的提示词模板**: 17个示例 + 4大原则 + JSON格式引导
 
 **Phase 2.2 验收通过，可以继续 Phase 2.3 (WeigherAgent) 的实施！** 🚀
+
+---
+
+## 📚 版本历史
+
+### v2.2.0 (原始实现)
+- JSON 文件词典存储（`_load_slang_dict()`, `_save_slang_dict()`）
+- 直接使用 `self.slang_dictionary` 字典
+- 仅支持精确匹配搜索
+
+### v2.2.1 (当前版本, 2026-01-19)
+**主要更新**:
+- 引入 `DictionaryStore` 抽象框架
+- 新增 Mem0 后端支持（语义检索）
+- `SlangDecoderAgent` 使用 `self.dictionary_store` 接口
+- 新增 `dictionary_config` 参数，保持向后兼容
+- 迁移 Mem0 框架到 `del_agent/memory/`
+
+**改进点**: 解耦词典操作与存储、支持多后端、语义检索能力
 
 ---
 

@@ -1,6 +1,9 @@
 """
 Critic Agent - 判别节点智能体
 负责评估其他 Agent 的输出质量，是 Verification Loop 的核心组件
+
+版本：2.2.1
+更新：支持严格度提示词生成器，动态调整评审标准
 """
 
 from typing import Any, Dict, Optional, Type
@@ -43,6 +46,7 @@ class CriticAgent(BaseAgent):
         llm_provider,
         prompt_manager: Optional[PromptManager] = None,
         strictness_level: float = 0.7,
+        use_dynamic_prompt: bool = False,
         **kwargs
     ):
         """
@@ -55,6 +59,7 @@ class CriticAgent(BaseAgent):
                 - 0.3-0.5: 宽松（允许较大偏差）
                 - 0.6-0.8: 标准（正常质量要求）
                 - 0.9-1.0: 严格（要求近乎完美）
+            use_dynamic_prompt: 是否使用动态提示词生成器（2.2.1 新增）
             **kwargs: 其他配置参数
         """
         super().__init__(
@@ -69,6 +74,7 @@ class CriticAgent(BaseAgent):
             raise ValueError("strictness_level must be between 0 and 1")
         
         self.strictness_level = strictness_level
+        self.use_dynamic_prompt = use_dynamic_prompt
         self.logger = logging.getLogger(f"{__name__}.CriticAgent")
         
         # 定义评估维度权重
@@ -79,8 +85,30 @@ class CriticAgent(BaseAgent):
             "consistency": 0.1            # 一致性
         }
         
+        # 初始化严格度提示词生成器（如果启用）
+        self.prompt_generator = None
+        if use_dynamic_prompt:
+            try:
+                try:
+                    from .strictness_prompt_generator import StrictnessPromptGenerator
+                except ImportError:
+                    from strictness_prompt_generator import StrictnessPromptGenerator
+                
+                self.prompt_generator = StrictnessPromptGenerator(
+                    llm_provider=llm_provider,
+                    prompt_manager=prompt_manager
+                )
+                self.logger.info("Dynamic prompt generation enabled")
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to initialize prompt generator: {e}. "
+                    "Falling back to static prompts."
+                )
+                self.use_dynamic_prompt = False
+        
         self.logger.info(
-            f"CriticAgent initialized with strictness_level={strictness_level}"
+            f"CriticAgent initialized with strictness_level={strictness_level}, "
+            f"dynamic_prompt={use_dynamic_prompt}"
         )
     
     def get_output_schema(self) -> Type[BaseModel]:
@@ -170,6 +198,101 @@ class CriticAgent(BaseAgent):
             return "标准（正常质量要求，检查准确性和完整性）"
         else:
             return "严格（要求近乎完美，细致检查所有细节）"
+    
+    def _generate_dynamic_prompt(self, strictness_level: Optional[float] = None):
+        """
+        使用严格度提示词生成器生成动态提示词（2.2.1 新增）
+        
+        Args:
+            strictness_level: 严格度级别（可选，默认使用实例的 strictness_level）
+        
+        Returns:
+            生成的提示词结果，如果失败则返回 None
+        """
+        if not self.use_dynamic_prompt or not self.prompt_generator:
+            return None
+        
+        level = strictness_level if strictness_level is not None else self.strictness_level
+        
+        try:
+            # 获取基础提示词
+            if self.prompt_manager:
+                base_prompts = self.prompt_manager.get_prompt("critic")
+                base_system_prompt = base_prompts.get("system_prompt", "")
+                base_user_prompt = base_prompts.get("user_prompt", "")
+            else:
+                self.logger.warning("No prompt_manager available, using default base prompt")
+                base_system_prompt = "你是一个质量评审专家，负责评估 AI Agent 的输出质量。"
+                base_user_prompt = ""
+            
+            # 使用生成器生成新提示词
+            result = self.prompt_generator.generate_prompt(
+                base_system_prompt=base_system_prompt,
+                strictness_level=level,
+                base_user_prompt=base_user_prompt
+            )
+            
+            if result.success:
+                self.logger.debug(
+                    f"Generated dynamic prompt for strictness={level}: "
+                    f"{result.key_adjustments}"
+                )
+                return result
+            else:
+                self.logger.error(f"Prompt generation failed: {result.error_message}")
+                return None
+        
+        except Exception as e:
+            self.logger.error(f"Failed to generate dynamic prompt: {e}")
+            return None
+    
+    def _apply_dynamic_prompt(self, prompt_result, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        应用动态生成的提示词到输入数据
+        
+        Args:
+            prompt_result: 提示词生成结果
+            input_data: 原始输入数据
+        
+        Returns:
+            更新后的输入数据
+        """
+        if not prompt_result:
+            return input_data
+        
+        # 将生成的提示词添加到输入数据中
+        # 这里使用一个特殊键来标记使用动态提示词
+        input_data["_dynamic_system_prompt"] = prompt_result.system_prompt
+        input_data["_dynamic_user_prompt"] = prompt_result.user_prompt_template
+        input_data["_strictness_description"] = prompt_result.strictness_description
+        input_data["_prompt_adjustments"] = prompt_result.key_adjustments
+        
+        return input_data
+    
+    def set_strictness_level(self, level: float, regenerate_prompt: bool = True):
+        """
+        动态调整严格度等级（支持提示词重新生成）
+        
+        Args:
+            level: 新的严格度等级 (0.0-1.0)
+            regenerate_prompt: 是否重新生成提示词（仅在 use_dynamic_prompt=True 时有效）
+        """
+        if not 0 <= level <= 1:
+            raise ValueError("strictness_level must be between 0 and 1")
+        
+        old_level = self.strictness_level
+        self.strictness_level = level
+        
+        self.logger.info(f"Strictness level changed: {old_level} -> {level}")
+        
+        # 如果启用动态提示词且需要重新生成
+        if self.use_dynamic_prompt and regenerate_prompt and self.prompt_generator:
+            prompt_result = self._generate_dynamic_prompt(level)
+            if prompt_result:
+                self.logger.info(
+                    f"Prompt regenerated for new strictness level. "
+                    f"Adjustments: {prompt_result.key_adjustments}"
+                )
     
     def validate_output(self, output: CriticFeedback) -> bool:
         """
@@ -336,12 +459,13 @@ class CriticAgent(BaseAgent):
         
         return results
     
-    def set_strictness_level(self, level: float):
+    def set_strictness_level(self, level: float, regenerate_prompt: bool = True):
         """
-        动态调整严格度等级
+        动态调整严格度等级（支持提示词重新生成）
         
         Args:
             level: 新的严格度等级 (0.0-1.0)
+            regenerate_prompt: 是否重新生成提示词（仅在 use_dynamic_prompt=True 时有效）
         """
         if not 0 <= level <= 1:
             raise ValueError("strictness_level must be between 0 and 1")
@@ -349,6 +473,13 @@ class CriticAgent(BaseAgent):
         old_level = self.strictness_level
         self.strictness_level = level
         
-        self.logger.info(
-            f"Strictness level adjusted: {old_level:.2f} → {level:.2f}"
-        )
+        self.logger.info(f"Strictness level changed: {old_level} -> {level}")
+        
+        # 如果启用动态提示词且需要重新生成
+        if self.use_dynamic_prompt and regenerate_prompt and self.prompt_generator:
+            prompt_result = self._generate_dynamic_prompt(level)
+            if prompt_result:
+                self.logger.info(
+                    f"Prompt regenerated for new strictness level. "
+                    f"Adjustments: {prompt_result.key_adjustments}"
+                )

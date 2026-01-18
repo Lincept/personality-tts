@@ -22,11 +22,13 @@ try:
     from ..core.base_agent import BaseAgent
     from ..models.schemas import SlangDecodingResult
     from ..core.prompt_manager import PromptManager
+    from ..core.dictionary_store import DictionaryStore, create_dictionary_store
 except (ImportError, ValueError):
     # 如果相对导入失败，使用绝对导入
     from core.base_agent import BaseAgent
     from models.schemas import SlangDecodingResult
     from core.prompt_manager import PromptManager
+    from core.dictionary_store import DictionaryStore, create_dictionary_store
 
 
 class SlangDecoderAgent(BaseAgent):
@@ -38,13 +40,23 @@ class SlangDecoderAgent(BaseAgent):
     
     特性：
     - 支持黑话词典的持久化存储和加载
+    - 支持多种词典后端（JSON、Mem0）
     - 动态更新黑话词典
     - 保留原文的语义和情感色彩
     - 可批量处理多条评论
     
     Example:
         >>> llm_provider = LLMProvider(...)
+        >>> # 使用 JSON 存储
         >>> decoder = SlangDecoderAgent(llm_provider, slang_dict_path="data/slang_dict.json")
+        >>> # 或使用 Mem0 存储
+        >>> decoder = SlangDecoderAgent(
+        ...     llm_provider,
+        ...     dictionary_config={
+        ...         "backend": "mem0",
+        ...         "mem0_config": {...}
+        ...     }
+        ... )
         >>> result = decoder.process("这个导师是学术妲己，总是画饼")
         >>> print(result.decoded_text)
         "这个导师善于承诺但不兑现，总是做出承诺但不实现"
@@ -57,6 +69,7 @@ class SlangDecoderAgent(BaseAgent):
         llm_provider,
         slang_dict_path: Optional[Path] = None,
         auto_save: bool = True,
+        dictionary_config: Optional[Dict[str, Any]] = None,
         **kwargs
     ):
         """
@@ -64,8 +77,13 @@ class SlangDecoderAgent(BaseAgent):
         
         Args:
             llm_provider: LLM 提供者实例
-            slang_dict_path: 黑话词典文件路径（JSON格式）
+            slang_dict_path: 黑话词典文件路径（JSON格式，向后兼容）
             auto_save: 是否自动保存新识别的黑话
+            dictionary_config: 词典配置字典（可选，优先级高于 slang_dict_path）
+                - backend: "json" 或 "mem0"
+                - file_path: JSON 文件路径（backend=json）
+                - mem0_config: Mem0 配置（backend=mem0）
+                - user_id: 用户 ID（backend=mem0）
             **kwargs: 传递给 BaseAgent 的额外参数
         """
         super().__init__(
@@ -74,67 +92,27 @@ class SlangDecoderAgent(BaseAgent):
             **kwargs
         )
         
-        self.slang_dict_path = slang_dict_path
-        self.auto_save = auto_save
-        self.slang_dictionary: Dict[str, str] = self._load_slang_dict()
+        # 向后兼容：如果提供了 slang_dict_path 但没有 dictionary_config
+        if slang_dict_path and not dictionary_config:
+            dictionary_config = {
+                "backend": "json",
+                "file_path": slang_dict_path,
+                "auto_save": auto_save
+            }
+        
+        # 创建词典存储实例
+        self.dictionary_store: DictionaryStore = create_dictionary_store(
+            dictionary_config or {"backend": "json"}
+        )
+        
+        # 获取词典统计
+        stats = self.dictionary_store.get_stats()
         
         self.logger.info(
-            f"SlangDecoderAgent initialized with {len(self.slang_dictionary)} terms"
+            f"SlangDecoderAgent initialized with {stats['total_terms']} terms "
+            f"(backend: {stats['backend']})"
         )
     
-    def _load_slang_dict(self) -> Dict[str, str]:
-        """
-        从文件加载黑话词典
-        
-        Returns:
-            Dict[str, str]: 黑话词典 {黑话: 标准解释}
-        """
-        if self.slang_dict_path and self.slang_dict_path.exists():
-            try:
-                with open(self.slang_dict_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    self.logger.info(
-                        f"Loaded {len(data)} slang terms from {self.slang_dict_path}"
-                    )
-                    return data
-            except Exception as e:
-                self.logger.error(f"Failed to load slang dictionary: {e}")
-                return {}
-        else:
-            self.logger.info("No slang dictionary file provided, starting with empty dict")
-            return {}
-    
-    def _save_slang_dict(self) -> bool:
-        """
-        保存黑话词典到文件
-        
-        Returns:
-            bool: 是否保存成功
-        """
-        if not self.slang_dict_path:
-            self.logger.warning("No slang_dict_path specified, cannot save")
-            return False
-        
-        try:
-            # 确保目录存在
-            self.slang_dict_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(self.slang_dict_path, 'w', encoding='utf-8') as f:
-                json.dump(
-                    self.slang_dictionary,
-                    f,
-                    ensure_ascii=False,
-                    indent=2
-                )
-            
-            self.logger.info(
-                f"Saved {len(self.slang_dictionary)} terms to {self.slang_dict_path}"
-            )
-            return True
-        
-        except Exception as e:
-            self.logger.error(f"Failed to save slang dictionary: {e}")
-            return False
     
     def update_dictionary(self, new_terms: Dict[str, str]) -> int:
         """
@@ -146,19 +124,12 @@ class SlangDecoderAgent(BaseAgent):
         Returns:
             int: 新增/更新的条目数量
         """
-        before_count = len(self.slang_dictionary)
-        self.slang_dictionary.update(new_terms)
-        after_count = len(self.slang_dictionary)
+        before_count = self.dictionary_store.get_stats()['total_terms']
+        self.dictionary_store.update(new_terms)
+        after_count = self.dictionary_store.get_stats()['total_terms']
         
-        updated_count = after_count - before_count + sum(
-            1 for k in new_terms if k in self.slang_dictionary
-        )
-        
+        updated_count = after_count - before_count
         self.logger.info(f"Updated {updated_count} terms in dictionary")
-        
-        # 自动保存
-        if self.auto_save:
-            self._save_slang_dict()
         
         return updated_count
     
@@ -192,8 +163,8 @@ class SlangDecoderAgent(BaseAgent):
         Returns:
             Dict[str, Any]: 准备好的输入数据
         """
-        # 获取已有词典
-        existing_dict = kwargs.get('existing_dict', self.slang_dictionary)
+        # 获取已有词典（使用新的 dictionary_store）
+        existing_dict = kwargs.get('existing_dict') or self.dictionary_store.get_all()
         
         # 格式化词典为可读字符串
         dict_str = "\n".join([
@@ -234,7 +205,7 @@ class SlangDecoderAgent(BaseAgent):
             return False
         
         # 自动更新词典（如果有新识别的黑话）
-        if output.slang_dictionary and self.auto_save:
+        if output.slang_dictionary:
             self.update_dictionary(output.slang_dictionary)
         
         return True
@@ -290,28 +261,26 @@ class SlangDecoderAgent(BaseAgent):
         Returns:
             Dict[str, Any]: 统计信息
         """
+        stats = self.dictionary_store.get_stats()
+        all_terms = self.dictionary_store.get_all()
+        
         return {
-            "total_terms": len(self.slang_dictionary),
-            "dictionary_path": str(self.slang_dict_path) if self.slang_dict_path else None,
-            "auto_save_enabled": self.auto_save,
-            "sample_terms": dict(list(self.slang_dictionary.items())[:5])
+            **stats,
+            "sample_terms": dict(list(all_terms.items())[:5]) if all_terms else {}
         }
     
-    def search_slang(self, keyword: str) -> Dict[str, str]:
+    def search_slang(self, keyword: str, limit: int = 10) -> Dict[str, str]:
         """
         搜索黑话词典
         
         Args:
             keyword: 搜索关键词
+            limit: 返回结果数量限制
         
         Returns:
             Dict[str, str]: 匹配的黑话条目
         """
-        return {
-            slang: meaning
-            for slang, meaning in self.slang_dictionary.items()
-            if keyword in slang or keyword in meaning
-        }
+        return self.dictionary_store.search(keyword, limit=limit)
     
     def clear_dictionary(self) -> bool:
         """
@@ -320,10 +289,6 @@ class SlangDecoderAgent(BaseAgent):
         Returns:
             bool: 是否成功
         """
-        self.slang_dictionary.clear()
+        self.dictionary_store.clear()
         self.logger.warning("Slang dictionary cleared")
-        
-        if self.auto_save:
-            return self._save_slang_dict()
-        
         return True
