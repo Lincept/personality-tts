@@ -12,8 +12,6 @@ __pycache__/
 .idea/
 *.swp
 *.swo
-.github/
-del_agent/.github/
 
 # 数据文件
 data/
