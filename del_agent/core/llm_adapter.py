@@ -7,9 +7,11 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List, Type
 import json
 import logging
+import os
 from tenacity import retry, stop_after_attempt, wait_exponential
 from openai import OpenAI
 from pydantic import BaseModel
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -110,9 +112,18 @@ class OpenAICompatibleProvider(LLMProvider):
             **kwargs: 其他配置参数
         """
         super().__init__(model_name, **kwargs)
+
+        self.base_url = base_url
+        self._is_ark_endpoint = bool(base_url and "volces.com" in base_url)
+        
+        # 禁用代理 - 通过环境变量
+        os.environ['NO_PROXY'] = '*'
+        os.environ['no_proxy'] = '*'
         
         # 创建OpenAI客户端
-        client_kwargs = {"api_key": api_key}
+        client_kwargs = {
+            "api_key": api_key
+        }
         if base_url:
             client_kwargs["base_url"] = base_url
         if timeout:
@@ -124,6 +135,11 @@ class OpenAICompatibleProvider(LLMProvider):
         
         self.client = OpenAI(**client_kwargs)
         self.logger.info(f"Initialized OpenAI-compatible provider with model: {model_name}")
+
+    def _apply_ark_thinking_override(self, request_params: Dict[str, Any]) -> None:
+        """对方舟(ARK)端点强制关闭 thinking 能力。"""
+        if self._is_ark_endpoint:
+            request_params["thinking"] = {"type": "disabled"}
     
     @retry(
         stop=stop_after_attempt(3),
@@ -163,6 +179,9 @@ class OpenAICompatibleProvider(LLMProvider):
                 
             # 添加其他参数
             request_params.update(kwargs)
+
+            # 方舟端点：强制关闭 thinking
+            self._apply_ark_thinking_override(request_params)
             
             # 调用API
             response = self.client.chat.completions.create(**request_params)
@@ -232,6 +251,9 @@ class OpenAICompatibleProvider(LLMProvider):
                 
             # 添加其他参数
             request_params.update(kwargs)
+
+            # 方舟端点：强制关闭 thinking
+            self._apply_ark_thinking_override(request_params)
             
             # 调用API
             response = self.client.chat.completions.create(**request_params)

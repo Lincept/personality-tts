@@ -127,13 +127,12 @@ class ConfigManager:
         # 默认LLM配置 - 将豆包设为默认
         default_api_key = os.getenv('LLM_API_KEY', '')
         
-        # 豆包配置（默认）
+        # 豆包配置（默认，使用火山引擎ARK API）
         self.llm_configs['doubao'] = LLMConfig(
             provider='doubao',
-            model_name='ERNIE-Bot-4',
-            api_key=os.getenv('DOBAO_API_KEY', default_api_key),
-            api_secret=os.getenv('DOBAO_API_SECRET'),
-            base_url='https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/completions_pro',
+            model_name='doubao-seed-1-6-251015',
+            api_key=os.getenv('ARK_API_KEY', default_api_key),
+            base_url='https://ark.cn-beijing.volces.com/api/v3',
             temperature=0.7
         )
         
