@@ -4,7 +4,8 @@ AI Data Factory - 轻量级AI数据工厂框架
 """
 
 from .core import LLMProvider, OpenAICompatibleProvider
-from .agents import RawCommentCleaner
+# 暂时注释掉 RawCommentCleaner 导入，避免循环导入
+# from .agents import RawCommentCleaner
 from .models import CommentCleaningResult, ProcessingStats, LLMConfig, AgentConfig
 from .utils import ConfigManager, get_config_manager
 from .core.prompt_manager import PromptManager, get_default_prompt_manager
@@ -20,7 +21,7 @@ __all__ = [
     "get_default_prompt_manager",
     
     # Agents
-    "RawCommentCleaner",
+    # "RawCommentCleaner",  # 暂时注释，避免循环导入
     
     # Models
     "CommentCleaningResult",

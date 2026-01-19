@@ -42,3 +42,15 @@ def create_memory_store(mem_cfg: Dict[str, Any]) -> MemoryStore:
 
     # 未知 backend：安全降级
     return NullMemoryStore()
+
+
+def create_memory_manager(config: Dict[str, Any]):
+    """创建 Memory Manager（兼容旧接口）
+    
+    Args:
+        config: 配置字典
+    
+    Returns:
+        MemoryStore 实例（Mem0Manager 或 NullMemoryStore）
+    """
+    return create_memory_store(config)

@@ -11,8 +11,8 @@ export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 # 检查 .env 文件
 if [ ! -f "$SCRIPT_DIR/.env" ]; then
     echo "⚠️  .env 文件不存在"
-    echo "正在从 .env.example 创建 .env 文件..."
-    cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
+    echo "正在从 env.example 创建 .env 文件..."
+    cp "$SCRIPT_DIR/env.example" "$SCRIPT_DIR/.env"
     echo "✓ 已创建 .env 文件"
     echo ""
     echo "请编辑 $SCRIPT_DIR/.env 文件，填写你的 API 密钥"

@@ -7,20 +7,36 @@ import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-from core.llm_adapter import LLMProvider
-from models.schemas import (
-    RawReview,
-    StructuredKnowledgeNode,
-    CommentCleaningResult,
-    SlangDecodingResult,
-    WeightAnalysisResult,
-    CompressionResult
-)
-from agents.raw_comment_cleaner import RawCommentCleaner
-from agents.slang_decoder import SlangDecoderAgent
-from agents.weigher import WeigherAgent
-from agents.compressor import CompressorAgent
-from agents.critic import CriticAgent
+try:
+    from ..core.llm_adapter import LLMProvider
+    from ..models.schemas import (
+        RawReview,
+        StructuredKnowledgeNode,
+        CommentCleaningResult,
+        SlangDecodingResult,
+        WeightAnalysisResult,
+        CompressionResult
+    )
+    from ..agents.raw_comment_cleaner import RawCommentCleaner
+    from ..agents.slang_decoder import SlangDecoderAgent
+    from ..agents.weigher import WeigherAgent
+    from ..agents.compressor import CompressorAgent
+    from ..agents.critic import CriticAgent
+except (ImportError, ValueError):
+    from del_agent.core.llm_adapter import LLMProvider
+    from del_agent.models.schemas import (
+        RawReview,
+        StructuredKnowledgeNode,
+        CommentCleaningResult,
+        SlangDecodingResult,
+        WeightAnalysisResult,
+        CompressionResult
+    )
+    from del_agent.agents.raw_comment_cleaner import RawCommentCleaner
+    from del_agent.agents.slang_decoder import SlangDecoderAgent
+    from del_agent.agents.weigher import WeigherAgent
+    from del_agent.agents.compressor import CompressorAgent
+    from del_agent.agents.critic import CriticAgent
 
 logger = logging.getLogger(__name__)
 

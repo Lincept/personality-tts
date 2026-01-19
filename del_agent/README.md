@@ -102,10 +102,10 @@ del_agent/
 cd del_agent
 
 # 安装依赖
-pip install -r ../requirements.txt
+pip install -r requirements.txt
 
 # 配置 API 密钥
-cp .env.example .env
+cp env.example .env
 # 编辑 .env 文件，根据使用的 LLM 提供者填写对应的 API 密钥
 ```
 
@@ -228,7 +228,7 @@ print(f"平均情绪强度: {summary['avg_emotional_intensity']:.2f}")
 
 项目使用 `.env` 文件管理敏感信息（API 密钥）：
 
-1. 复制模板文件：`cp .env.example .env`
+1. 复制模板文件：`cp env.example .env`
 2. 根据使用的 LLM 提供者，在 `.env` 中填写相应的 API 密钥：
 
 ```bash

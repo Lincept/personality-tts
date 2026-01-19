@@ -41,8 +41,8 @@ class Mem0Manager:
         try:
             from mem0 import Memory
 
-            del_agent_root = Path(__file__).resolve().parents[1]
-            qdrant_path = (del_agent_root / "data" / "qdrant").resolve()
+            project_root = Path(__file__).resolve().parents[2]
+            qdrant_path = (project_root / "data" / "qdrant").resolve()
 
             # 构建 Mem0 配置
             # 完全使用通义千问 API（LLM + Embedding）
@@ -68,7 +68,7 @@ class Mem0Manager:
                     "provider": "qdrant",
                     "config": {
                         "collection_name": "personality_tts_memory",
-                        "path": str(qdrant_path),  # 固定到 del_agent/data/qdrant
+                        "path": str(qdrant_path),
                         "embedding_model_dims": 1024,  # 确保向量数据库使用正确的维度
                         "on_disk": True  # 🔥 关键：启用持久化存储
                     }

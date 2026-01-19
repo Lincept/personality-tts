@@ -7,6 +7,7 @@ import time
 import uuid
 import wave
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Dict, Any
 
 import pyaudio
@@ -448,7 +449,9 @@ class DialogSession:
                         if config.ENABLE_LOG:
                             print(f"⚠️ AEC 处理失败，使用原始音频: {e}")
                 
-                save_input_pcm_to_wav(audio_data, "data/input.pcm")
+                data_dir = Path(__file__).resolve().parent / "data"
+                data_dir.mkdir(parents=True, exist_ok=True)
+                save_input_pcm_to_wav(audio_data, str(data_dir / "input.pcm"))
                 await self.client.task_request(audio_data)
                 await asyncio.sleep(0.01)  # 避免CPU过度使用
             except Exception as e:
@@ -530,7 +533,9 @@ class DialogSession:
             await self.client.close()
             if config.ENABLE_LOG:
                 print(f"dialog request logid: {self.client.logid}, chat mod: {self.mod}")
-            save_output_to_file(self.audio_buffer, "data/output.pcm")
+            data_dir = Path(__file__).resolve().parent / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            save_output_to_file(self.audio_buffer, str(data_dir / "output.pcm"))
         except Exception as e:
             if config.ENABLE_LOG:
                 print(f"会话错误: {e}")

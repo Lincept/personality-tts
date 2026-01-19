@@ -349,3 +349,199 @@ class CompressionResult(BaseModel):
         description="时间戳"
     )
     metadata: Dict[str, Any] = Field(default_factory=dict, description="元数据")
+
+
+# ==================== Phase 3: 前端交互层数据模型 ====================
+
+class UserPersonalityVector(BaseModel):
+    """
+    用户画像向量模型
+    用于存储和管理用户的个性化偏好和交互风格
+    """
+    user_id: str = Field(
+        ...,
+        description="用户唯一标识",
+        example="user_12345"
+    )
+    humor_preference: float = Field(
+        default=0.5,
+        description="幽默偏好程度，0-1之间，0为严肃，1为幽默",
+        ge=0.0,
+        le=1.0,
+        example=0.7
+    )
+    formality_level: float = Field(
+        default=0.5,
+        description="正式程度，0-1之间，0为随意，1为正式",
+        ge=0.0,
+        le=1.0,
+        example=0.3
+    )
+    detail_preference: float = Field(
+        default=0.5,
+        description="细节偏好，0-1之间，0为简洁，1为详细",
+        ge=0.0,
+        le=1.0,
+        example=0.6
+    )
+    interaction_history_count: int = Field(
+        default=0,
+        description="历史交互次数",
+        ge=0,
+        example=42
+    )
+    preferred_topics: List[str] = Field(
+        default_factory=list,
+        description="用户关注的话题列表",
+        example=["科研", "导师", "经费"]
+    )
+    language_style: str = Field(
+        default="neutral",
+        description="语言风格偏好",
+        example="casual"
+    )
+    last_interaction: Optional[datetime] = Field(
+        default=None,
+        description="最后一次交互时间"
+    )
+    created_at: datetime = Field(
+        default_factory=datetime.now,
+        description="画像创建时间"
+    )
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        description="画像最后更新时间"
+    )
+    
+    @validator('humor_preference', 'formality_level', 'detail_preference')
+    def validate_preference_range(cls, v):
+        """验证偏好值范围"""
+        if not 0 <= v <= 1:
+            raise ValueError('preference values must be between 0 and 1')
+        return v
+    
+    @validator('language_style')
+    def validate_language_style(cls, v):
+        """验证语言风格"""
+        valid_styles = ["formal", "casual", "neutral", "professional", "friendly"]
+        if v not in valid_styles:
+            raise ValueError(f'language_style must be one of {valid_styles}')
+        return v
+
+
+class InfoExtractResult(BaseModel):
+    """
+    信息提取结果模型
+    InfoExtractorAgent 从用户对话中提取的结构化信息
+    """
+    extracted_review: Optional[RawReview] = Field(
+        default=None,
+        description="提取到的原始评价（如果有）"
+    )
+    intent_type: str = Field(
+        ...,
+        description="用户意图类型：chat（闲聊）、query（查询）、provide_info（提供信息）",
+        example="provide_info"
+    )
+    extracted_entities: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="提取的实体信息（导师名、机构、维度等）",
+        example={
+            "mentor_name": "张三",
+            "university": "清华大学",
+            "dimension": "Funding"
+        }
+    )
+    confidence_score: float = Field(
+        default=1.0,
+        description="提取置信度，0-1之间",
+        ge=0.0,
+        le=1.0,
+        example=0.85
+    )
+    requires_clarification: bool = Field(
+        default=False,
+        description="是否需要进一步澄清",
+        example=False
+    )
+    clarification_questions: List[str] = Field(
+        default_factory=list,
+        description="需要澄清的问题列表",
+        example=["您指的是哪个大学的张三老师？"]
+    )
+    success: bool = Field(default=True, description="处理是否成功")
+    error_message: Optional[str] = Field(default=None, description="错误信息")
+    execution_time: float = Field(default=0.0, description="执行时间（秒）")
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now().isoformat(),
+        description="时间戳"
+    )
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="元数据")
+    
+    @validator('intent_type')
+    def validate_intent_type(cls, v):
+        """验证意图类型"""
+        valid_intents = ["chat", "query", "provide_info"]
+        if v not in valid_intents:
+            raise ValueError(f'intent_type must be one of {valid_intents}')
+        return v
+    
+    @validator('confidence_score')
+    def validate_confidence_score(cls, v):
+        """验证置信度范围"""
+        if not 0 <= v <= 1:
+            raise ValueError('confidence_score must be between 0 and 1')
+        return v
+
+
+class PersonaResponse(BaseModel):
+    """
+    个性化回复结果模型
+    PersonaAgent 的输出
+    """
+    response_text: str = Field(
+        ...,
+        description="生成的回复文本",
+        example="根据您的情况，建议您..."
+    )
+    applied_style: Dict[str, float] = Field(
+        default_factory=dict,
+        description="应用的风格参数",
+        example={
+            "humor_level": 0.7,
+            "formality_level": 0.4,
+            "detail_level": 0.6
+        }
+    )
+    confidence_score: float = Field(
+        default=1.0,
+        description="回复置信度，0-1之间",
+        ge=0.0,
+        le=1.0,
+        example=0.9
+    )
+    requires_followup: bool = Field(
+        default=False,
+        description="是否需要后续澄清或追问",
+        example=False
+    )
+    suggested_topics: List[str] = Field(
+        default_factory=list,
+        description="建议的相关话题",
+        example=["科研进展", "经费管理"]
+    )
+    success: bool = Field(default=True, description="处理是否成功")
+    error_message: Optional[str] = Field(default=None, description="错误信息")
+    execution_time: float = Field(default=0.0, description="执行时间（秒）")
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now().isoformat(),
+        description="时间戳"
+    )
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="元数据")
+    
+    @validator('confidence_score')
+    def validate_confidence_score_persona(cls, v):
+        """验证置信度范围"""
+        if not 0 <= v <= 1:
+            raise ValueError('confidence_score must be between 0 and 1')
+        return v

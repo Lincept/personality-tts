@@ -179,11 +179,14 @@ def test_full_pipeline():
         )
         
         # 创建数据工厂流水线（不启用验证）
+        del_agent_root = Path(__file__).resolve().parents[1]
+        slang_dict_path = del_agent_root / "data" / "slang_dict.json"
+
         pipeline = DataFactoryPipeline(
             llm_provider=llm_provider,
             enable_verification=False,
             slang_dict_storage="json",
-            slang_dict_path="./data/slang_dict.json"
+            slang_dict_path=str(slang_dict_path)
         )
         
         # 创建测试评论
