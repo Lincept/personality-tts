@@ -139,6 +139,42 @@ class OpenAICompatibleProvider(LLMProvider):
         self.client = OpenAI(**client_kwargs)
         self.logger.info(f"Initialized OpenAI-compatible provider with model: {model_name}")
 
+    def _fix_nested_type_names(self, data: Dict[str, Any], schema: Type[BaseModel]) -> Dict[str, Any]:
+        """
+        修复 LLM 返回的嵌套类型名称问题
+        例如: {"extracted_review": {"RawReview": {...}}} → {"extracted_review": {...}}
+        
+        Args:
+            data: 原始 JSON 数据
+            schema: Pydantic 模型类
+            
+        Returns:
+            修复后的 JSON 数据
+        """
+        if not isinstance(data, dict):
+            return data
+        
+        fixed_data = {}
+        annotations = getattr(schema, '__annotations__', {})
+        
+        for key, value in data.items():
+            if isinstance(value, dict) and len(value) == 1:
+                # 检查是否是嵌套类型名的情况
+                nested_key = list(value.keys())[0]
+                nested_value = value[nested_key]
+                
+                # 如果嵌套键看起来像类型名（首字母大写）且内部值是字典
+                if nested_key and nested_key[0].isupper() and isinstance(nested_value, dict):
+                    # 直接使用内部值
+                    self.logger.debug(f"Auto-fixing nested type name: {key}.{nested_key} -> {key}")
+                    fixed_data[key] = nested_value
+                else:
+                    fixed_data[key] = value
+            else:
+                fixed_data[key] = value
+        
+        return fixed_data
+
     def _apply_ark_thinking_override(self, request_params: Dict[str, Any]) -> None:
         """对方舟(ARK)端点设置 reasoning_effort 参数。"""
         if self._is_ark_endpoint:
@@ -230,11 +266,28 @@ class OpenAICompatibleProvider(LLMProvider):
         try:
             self.logger.debug(f"Generating structured output for {response_format.__name__}")
             
+            # 获取 Pydantic schema
+            schema_dict = response_format.model_json_schema()
+            schema_properties = schema_dict.get('properties', {})
+            
+            # 构建字段说明
+            required_fields = schema_dict.get('required', [])
+            field_descriptions = []
+            for field_name, field_info in schema_properties.items():
+                field_type = field_info.get('type', 'any')
+                field_desc = field_info.get('description', '')
+                is_required = field_name in required_fields
+                required_mark = " (required)" if is_required else " (optional)"
+                field_descriptions.append(f"  - {field_name}: {field_type}{required_mark} - {field_desc}")
+            
+            fields_text = "\n".join(field_descriptions) if field_descriptions else "  (no specific fields)"
+            
             # 添加JSON格式指示到系统消息
             json_instruction = (
-                "You must respond with valid JSON that matches the expected schema. "
+                f"You must respond with valid JSON that matches the expected schema.\n"
+                f"Expected JSON fields:\n{fields_text}\n\n"
                 "Do not include any explanations or markdown formatting. "
-                "Return only the JSON object."
+                "Return only the JSON object with the specified field names."
             )
             
             # 修改消息，确保第一个消息是系统消息
@@ -277,6 +330,10 @@ class OpenAICompatibleProvider(LLMProvider):
             except json.JSONDecodeError as e:
                 self.logger.error(f"Invalid JSON response: {content}")
                 raise ValueError(f"LLM returned invalid JSON: {str(e)}")
+            
+            # 自动修复嵌套的类型名称问题
+            # 例如 {"extracted_review": {"RawReview": {...}}} → {"extracted_review": {...}}
+            json_data = self._fix_nested_type_names(json_data, response_format)
             
             # 验证并创建Pydantic模型实例
             try:

@@ -108,3 +108,7 @@
 - 后端 DataFactoryPipeline 集成已支持，但测试中使用 mock
 - RAG 检索接口已预留，待 Phase 5 实现
 - 导入问题已全部解决，支持多种导入方式
+
+### 2026-01-20 补充
+- query 模式接入后端检索路径（优先 backend_pipeline.query_knowledge，其次 rag_retriever）
+- 返回 metadata.backend_query（是否调用、来源与数量）

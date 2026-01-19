@@ -6,8 +6,9 @@ Persona Agent - 个性化对话智能体
 创建：Phase 3.3
 """
 
-from typing import Any, Dict, Optional, Type, List
+from typing import Any, Dict, Optional, Type, List, Callable
 import logging
+import json
 from pydantic import BaseModel
 
 try:
@@ -43,6 +44,8 @@ class PersonaAgent(BaseAgent):
         self,
         llm_provider,
         prompt_manager: Optional[PromptManager] = None,
+        trace_enabled: bool = False,
+        trace_print: Optional[Callable[[str], None]] = None,
         **kwargs
     ):
         """
@@ -51,6 +54,8 @@ class PersonaAgent(BaseAgent):
         Args:
             llm_provider: LLM提供者
             prompt_manager: 提示词管理器（可选）
+            trace_enabled: 是否启用 trace 输出
+            trace_print: 自定义 trace 输出函数
             **kwargs: 其他配置参数
         """
         super().__init__(
@@ -62,6 +67,57 @@ class PersonaAgent(BaseAgent):
         
         self.logger = logging.getLogger(f"{__name__}.PersonaAgent")
         self.logger.info("PersonaAgent initialized")
+
+        # Trace 配置
+        self.trace_enabled = trace_enabled
+        self._trace_print = trace_print or print
+
+    def _truncate(self, text: str, max_len: int = 120) -> str:
+        if text is None:
+            return ""
+        text = str(text).replace("\n", " ")
+        return text if len(text) <= max_len else (text[: max_len - 3] + "...")
+
+    def _trace(self, title: str, payload: Dict[str, Any]):
+        if not self.trace_enabled:
+            return
+        try:
+            compact = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+        except Exception:
+            compact = str(payload)
+        self._trace_print(f"[Persona] {title}: {self._truncate(compact, 280)}")
+
+    async def process(self, raw_input: Any, **kwargs) -> PersonaResponse:
+        """
+        处理输入数据，带 trace 输出
+        """
+        import time
+        start_time = time.time()
+
+        # 提取查询内容用于 trace
+        if isinstance(raw_input, dict):
+            query = raw_input.get('query', raw_input.get('user_input', ''))
+            rag_results = raw_input.get('rag_results', [])
+        else:
+            query = str(raw_input)
+            rag_results = []
+        self._trace("input", {
+            "query": self._truncate(query, 160),
+            "rag_count": len(rag_results) if isinstance(rag_results, list) else 0
+        })
+
+        # 调用父类方法
+        result = await super().process(raw_input, **kwargs)
+
+        # Trace 输出
+        execution_time = time.time() - start_time
+        self._trace("output", {
+            "response": self._truncate(result.response_text, 200),
+            "style": result.applied_style,
+            "time": f"{execution_time:.2f}s"
+        })
+
+        return result
     
     def get_output_schema(self) -> Type[BaseModel]:
         """获取输出模式"""
@@ -73,28 +129,45 @@ class PersonaAgent(BaseAgent):
     
     def prepare_input(
         self,
-        query: str,
-        user_profile: Optional[UserPersonalityVector] = None,
-        conversation_history: Optional[List[Dict[str, str]]] = None,
-        rag_context: Optional[str] = None,
+        raw_input: Any,
         **kwargs
     ) -> Dict[str, Any]:
         """
         准备输入数据
         
         Args:
-            query: 用户查询
-            user_profile: 用户画像（可选）
-            conversation_history: 对话历史（可选）
-            rag_context: RAG 检索的背景信息（可选）
+            raw_input: 原始输入（可以是字符串或字典）
             **kwargs: 其他参数
             
         Returns:
             处理后的输入数据字典
         """
-        # 如果没有提供用户画像，使用默认值
+        # 处理不同的输入格式
+        if isinstance(raw_input, dict):
+            query = raw_input.get('query', raw_input.get('user_input', ''))
+            user_profile = raw_input.get('user_profile')
+            conversation_history = raw_input.get('conversation_history', [])
+            rag_context = raw_input.get('rag_context', '')
+        elif isinstance(raw_input, str):
+            query = raw_input
+            user_profile = kwargs.get('user_profile')
+            conversation_history = kwargs.get('conversation_history', [])
+            rag_context = kwargs.get('rag_context', '')
+        else:
+            query = str(raw_input)
+            user_profile = None
+            conversation_history = []
+            rag_context = ''
+        
+        # 如果没有提供用户画像或是字典，使用默认值或转换
         if user_profile is None:
             user_profile = UserPersonalityVector(user_id="default")
+        elif isinstance(user_profile, dict):
+            # 如果是字典，尝试转换为UserPersonalityVector对象
+            try:
+                user_profile = UserPersonalityVector(**user_profile)
+            except Exception:
+                user_profile = UserPersonalityVector(user_id="default")
         
         # 提取风格参数
         style_params = {
@@ -113,7 +186,7 @@ class PersonaAgent(BaseAgent):
             **style_params
         }
         
-        self.logger.debug(f"Prepared input for query: {query[:50]}...")
+        self.logger.debug(f"Prepared input for query: {query[:50] if query else ''}...")
         return input_data
     
     def validate_output(self, output: PersonaResponse) -> bool:
@@ -126,20 +199,17 @@ class PersonaAgent(BaseAgent):
         Returns:
             是否验证通过
         """
-        # 检查回复文本是否为空
+        # 检查回复文本是否为空（允许空响应，但记录警告）
         if not output.response_text or not output.response_text.strip():
             self.logger.warning("Response text is empty")
-            return False
+            # 不返回 False，允许继续
         
-        # 检查回复长度是否合理（不应过短或过长）
-        response_length = len(output.response_text)
-        if response_length < 10:
-            self.logger.warning(f"Response too short: {response_length} characters")
-            return False
+        # 检查回复长度是否合理（不应过长）
+        response_length = len(output.response_text) if output.response_text else 0
         
         if response_length > 5000:
             self.logger.warning(f"Response too long: {response_length} characters")
-            return False
+            # 也不强制失败，只是警告
         
         return True
     

@@ -22,18 +22,22 @@ from del_agent.frontend.voice_adapter import VoiceAdapter, start_voice_conversat
 from del_agent.core.llm_adapter import LLMProvider, OpenAICompatibleProvider
 from del_agent.utils.config import ConfigManager
 from del_agent.backend.factory import DataFactoryPipeline
+from del_agent.storage.vector_store import create_vector_store
 from del_agent.models.schemas import RawReview
 import json
 from datetime import datetime
 from typing import List, Optional
 import os
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# 默认不输出 logging（本项目调试输出使用 print + 标志位控制）
+logging.getLogger().setLevel(logging.WARNING)
+
+
+def _truncate(text: str, max_len: int = 180) -> str:
+    if text is None:
+        return ""
+    text = str(text).replace("\n", " ")
+    return text if len(text) <= max_len else (text[: max_len - 3] + "...")
 
 
 class DELAgent:
@@ -46,7 +50,12 @@ class DELAgent:
     3. 支持命令行参数切换模式
     """
     
-    def __init__(self, config_path: str = "del_agent/config/settings.yaml"):
+    def __init__(
+        self,
+        config_path: str = "del_agent/config/settings.yaml",
+        trace_frontend: bool = False,
+        trace_backend: bool = False
+    ):
         """
         初始化 DEL Agent
         
@@ -57,26 +66,57 @@ class DELAgent:
         self.config_manager = ConfigManager(config_path)
         self.orchestrator = None
         self.llm_provider = None
+
+        self.trace_frontend = trace_frontend
+        self.trace_backend = trace_backend
     
     def load_configuration(self) -> None:
         """加载配置（已通过 ConfigManager 自动加载）"""
-        logger.info(f"Configuration loaded from {self.config_path}")
+        print(f"[CONFIG] loaded: {self.config_path}")
     
     def initialize_text_mode(self) -> None:
         """初始化文本模式组件"""
-        logger.info("Initializing text mode components...")
-        
-        # 创建 LLM Provider
-        # 这里需要根据实际配置创建，暂时使用占位
-        # self.llm_provider = LLMProvider(...)
-        
-        # 创建 Orchestrator
-        # self.orchestrator = FrontendOrchestrator(
-        #     llm_provider=self.llm_provider,
-        #     enable_rag=False
-        # )
-        
-        logger.info("Text mode initialized")
+        print("[INIT] text mode...")
+
+        llm_config = self.config_manager.get_llm_config('doubao')
+        if not llm_config.api_key:
+            raise RuntimeError("未找到豆包 API Key（请设置 ARK_API_KEY 或 DOBAO_API_KEY）")
+
+        self.llm_provider = OpenAICompatibleProvider(
+            model_name=llm_config.model_name,
+            api_key=llm_config.api_key,
+            base_url=llm_config.base_url,
+            timeout=llm_config.timeout,
+            api_secret=getattr(llm_config, "api_secret", None)
+        )
+
+        mem_config = (
+            self.config_manager.get_global_config("mem0_config")
+            or self.config_manager.get_global_config("memory")
+            or {}
+        )
+        vector_store = create_vector_store(mem_config)
+
+        backend_pipeline = DataFactoryPipeline(
+            llm_provider=self.llm_provider,
+            enable_verification=False,
+            max_retries=3,
+            strictness_level=0.7,
+            vector_store=vector_store,
+            trace_backend=self.trace_backend,
+            trace_print=print
+        )
+
+        self.orchestrator = FrontendOrchestrator(
+            llm_provider=self.llm_provider,
+            backend_pipeline=backend_pipeline,
+            enable_rag=True,
+            rag_retriever=vector_store,
+            trace_frontend=self.trace_frontend,
+            trace_print=print
+        )
+
+        print("[INIT] text mode ready")
     
     async def run_text_mode(self) -> None:
         """
@@ -92,6 +132,9 @@ class DELAgent:
         print("-" * 60)
         
         user_id = "default_user"
+
+        if not self.orchestrator:
+            self.initialize_text_mode()
         
         while True:
             try:
@@ -114,6 +157,10 @@ class DELAgent:
                 
                 # 处理用户输入
                 if self.orchestrator:
+                    if self.trace_frontend or self.trace_backend:
+                        print("-" * 60)
+                        print(f"[TRACE] frontend={self.trace_frontend} backend={self.trace_backend}")
+                        print(f"[USER] {_truncate(user_input, 220)}")
                     result = await self.orchestrator.process_user_input(
                         user_id=user_id,
                         user_input=user_input
@@ -124,7 +171,7 @@ class DELAgent:
                         
                         # 显示意图类型（调试信息）
                         intent = result.get("intent_type", "unknown")
-                        print(f"\n[调试] 意图: {intent}, 执行时间: {result['execution_time']:.2f}s")
+                        print(f"\n[结果] 意图: {intent}, 耗时: {result['execution_time']:.2f}s")
                     else:
                         print(f"\n[错误] {result.get('error_message', '处理失败')}")
                 else:
@@ -135,9 +182,12 @@ class DELAgent:
             except KeyboardInterrupt:
                 print("\n\n再见！")
                 break
+            except EOFError:
+                # stdin 关闭（管道输入结束），优雅退出
+                print("\n[EOF] 输入结束，退出")
+                break
             except Exception as e:
-                logger.error(f"Error processing input: {e}", exc_info=True)
-                print(f"\n[错误] 处理输入时出错: {e}")
+                print(f"\n[错误] 处理输入时出错: {type(e).__name__}: {e}")
     
     async def run_voice_mode(
         self,
@@ -241,7 +291,9 @@ class DELAgent:
                 llm_provider=llm_provider,
                 enable_verification=False,  # 可配置
                 max_retries=3,
-                strictness_level=0.7
+                strictness_level=0.7,
+                trace_backend=self.trace_backend,
+                trace_print=print
             )
             print("✓ DataFactoryPipeline 初始化成功")
         except Exception as e:
@@ -321,7 +373,7 @@ class DELAgent:
         
         # 批量处理评论
         try:
-            results = pipeline.process_batch(
+            results = await pipeline.process_batch(
                 all_reviews,
                 continue_on_error=True
             )
@@ -455,6 +507,18 @@ async def main():
         action="store_true",
         help="启用调试模式"
     )
+
+    parser.add_argument(
+        "--trace-frontend",
+        action="store_true",
+        help="输出前端各模块输入/输出（InfoExtractor/Persona/路由等）"
+    )
+
+    parser.add_argument(
+        "--trace-backend",
+        action="store_true",
+        help="输出后端各模块输入/输出（Cleaner/SlangDecoder/Weigher/Compressor 等）"
+    )
     
     parser.add_argument(
         "--limit",
@@ -474,10 +538,15 @@ async def main():
     
     # 设置日志级别
     if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
+        # debug 仅用于异常堆栈；常规过程输出仍使用 print + trace 标志位
+        logging.getLogger().setLevel(logging.WARNING)
     
     # 创建应用实例
-    app = DELAgent(config_path=args.config)
+    app = DELAgent(
+        config_path=args.config,
+        trace_frontend=args.trace_frontend,
+        trace_backend=args.trace_backend
+    )
     
     try:
         # 加载配置

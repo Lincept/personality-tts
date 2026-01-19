@@ -6,8 +6,9 @@ InfoExtractor Agent - 信息提取智能体
 创建：Phase 3.4
 """
 
-from typing import Any, Dict, Optional, Type, List
+from typing import Any, Dict, Optional, Type, List, Callable
 import logging
+import json
 from pydantic import BaseModel
 
 try:
@@ -43,6 +44,8 @@ class InfoExtractorAgent(BaseAgent):
         self,
         llm_provider,
         prompt_manager: Optional[PromptManager] = None,
+        trace_enabled: bool = False,
+        trace_print: Optional[Callable[[str], None]] = None,
         **kwargs
     ):
         """
@@ -51,6 +54,8 @@ class InfoExtractorAgent(BaseAgent):
         Args:
             llm_provider: LLM提供者
             prompt_manager: 提示词管理器（可选）
+            trace_enabled: 是否启用 trace 输出
+            trace_print: 自定义 trace 输出函数
             **kwargs: 其他配置参数
         """
         super().__init__(
@@ -63,12 +68,60 @@ class InfoExtractorAgent(BaseAgent):
         self.logger = logging.getLogger(f"{__name__}.InfoExtractorAgent")
         self.logger.info("InfoExtractorAgent initialized")
         
-        # 定义支持的评价维度
-        self.valid_dimensions = [
-            "Funding", "Personality", "Academic_Geng",
-            "Work_Pressure", "Lab_Atmosphere", "Publication",
-            "Career_Development", "Equipment", "Other"
-        ]
+        # Trace 配置
+        self.trace_enabled = trace_enabled
+        self._trace_print = trace_print or print
+
+    def _truncate(self, text: str, max_len: int = 120) -> str:
+        if text is None:
+            return ""
+        text = str(text).replace("\n", " ")
+        return text if len(text) <= max_len else (text[: max_len - 3] + "...")
+
+    def _trace(self, title: str, payload: Dict[str, Any]):
+        if not self.trace_enabled:
+            return
+        try:
+            compact = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+        except Exception:
+            compact = str(payload)
+        self._trace_print(f"[InfoExtractor] {title}: {self._truncate(compact, 280)}")
+
+    async def process(self, raw_input: Any, **kwargs) -> InfoExtractResult:
+        """
+        处理输入数据，带 trace 输出
+        """
+        import time
+        start_time = time.time()
+
+        # Trace 输入
+        if isinstance(raw_input, dict):
+            user_input = raw_input.get('user_input', '')
+        else:
+            user_input = str(raw_input)
+        self._trace("input", {"user_input": self._truncate(user_input, 160)})
+
+        # 调用父类方法
+        result = await super().process(raw_input, **kwargs)
+
+        # Trace 输出
+        execution_time = time.time() - start_time
+        self._trace("output", {
+            "intent_type": result.intent_type,
+            "confidence": result.confidence_score,
+            "entities": result.extracted_entities,
+            "has_review": bool(result.extracted_review),
+            "time": f"{execution_time:.2f}s"
+        })
+
+        return result
+        
+    # 定义支持的评价维度
+    valid_dimensions = [
+        "Funding", "Personality", "Academic_Geng",
+        "Work_Pressure", "Lab_Atmosphere", "Publication",
+        "Career_Development", "Equipment", "Other"
+    ]
     
     def get_output_schema(self) -> Type[BaseModel]:
         """获取输出模式"""
@@ -80,24 +133,33 @@ class InfoExtractorAgent(BaseAgent):
     
     def prepare_input(
         self,
-        user_input: str,
-        conversation_history: Optional[List[Dict[str, str]]] = None,
+        raw_input: Any,
         **kwargs
     ) -> Dict[str, Any]:
         """
         准备输入数据
         
         Args:
-            user_input: 用户输入文本
-            conversation_history: 对话历史（可选）
+            raw_input: 原始输入（可以是字符串或字典）
             **kwargs: 其他参数
             
         Returns:
             处理后的输入数据字典
         """
+        # 处理不同的输入格式
+        if isinstance(raw_input, dict):
+            user_input = raw_input.get('user_input', '')
+            conversation_history = raw_input.get('conversation_history', [])
+        elif isinstance(raw_input, str):
+            user_input = raw_input
+            conversation_history = kwargs.get('conversation_history', [])
+        else:
+            user_input = str(raw_input)
+            conversation_history = []
+        
         input_data = {
             'user_input': user_input,
-            'conversation_history': conversation_history or []
+            'conversation_history': conversation_history
         }
         
         self.logger.debug(f"Prepared input for extraction: {user_input[:100]}...")

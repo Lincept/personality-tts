@@ -7,9 +7,14 @@ import logging
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
-from core.base_agent import BaseAgent
-from core.llm_adapter import LLMProvider
-from models.schemas import CompressionResult, StructuredKnowledgeNode
+try:
+    from ..core.base_agent import BaseAgent
+    from ..core.llm_adapter import LLMProvider
+    from ..models.schemas import CompressionResult, StructuredKnowledgeNode
+except (ImportError, ValueError):
+    from core.base_agent import BaseAgent
+    from core.llm_adapter import LLMProvider
+    from models.schemas import CompressionResult, StructuredKnowledgeNode
 
 logger = logging.getLogger(__name__)
 

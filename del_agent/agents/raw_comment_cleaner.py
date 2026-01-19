@@ -6,9 +6,14 @@ Raw Comment Cleaner Agent - 原始评论清洗员
 from typing import Any, Dict, Optional
 import logging
 
-from core.base_agent import BaseAgent
-from models.schemas import CommentCleaningResult
-from core.prompt_manager import PromptManager
+try:
+    from ..core.base_agent import BaseAgent
+    from ..models.schemas import CommentCleaningResult
+    from ..core.prompt_manager import PromptManager
+except (ImportError, ValueError):
+    from core.base_agent import BaseAgent
+    from models.schemas import CommentCleaningResult
+    from core.prompt_manager import PromptManager
 
 
 class RawCommentCleaner(BaseAgent):

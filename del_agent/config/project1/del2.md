@@ -24,6 +24,12 @@
 - ✅ Phase 4.2：双通道入口（main.py）完成 - 文本/语音模式均可独立运行
 - ✅ Phase 5.1：VectorStore（向量存储接口）完成并测试通过（10/10）
 - ✅ Phase 5.2：KnowledgeGraph（知识图谱接口）完成并测试通过（16/16）
+- ✅ 文档：ARCHITECTURE.md 已更新为 v3.0.0（反映 Phase 1-5 全链路现状）
+- ✅ 补充：query 模式接入后端检索路径（VectorStore/Mem0 可选）
+- ✅ **调试功能**：Trace 输出系统完成（2026-01-20）
+  - `--trace-frontend`：输出前端各模块输入/输出
+  - `--trace-backend`：输出后端各模块输入/输出
+  - 覆盖模块：InfoExtractor、Persona、RawCommentCleaner、SlangDecoder、Weigher、Compressor
 
 ## 2. 后续执行计划（可直接执行）
 

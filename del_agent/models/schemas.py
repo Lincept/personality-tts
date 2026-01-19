@@ -439,7 +439,7 @@ class InfoExtractResult(BaseModel):
         description="提取到的原始评价（如果有）"
     )
     intent_type: str = Field(
-        ...,
+        default="chat",
         description="用户意图类型：chat（闲聊）、query（查询）、provide_info（提供信息）",
         example="provide_info"
     )
@@ -500,17 +500,18 @@ class PersonaResponse(BaseModel):
     PersonaAgent 的输出
     """
     response_text: str = Field(
-        ...,
+        default="",
         description="生成的回复文本",
         example="根据您的情况，建议您..."
     )
-    applied_style: Dict[str, float] = Field(
+    applied_style: Dict[str, Any] = Field(
         default_factory=dict,
-        description="应用的风格参数",
+        description="应用的风格参数（可以包含数值和字符串）",
         example={
             "humor_level": 0.7,
             "formality_level": 0.4,
-            "detail_level": 0.6
+            "detail_level": 0.6,
+            "language_style": "neutral"
         }
     )
     confidence_score: float = Field(

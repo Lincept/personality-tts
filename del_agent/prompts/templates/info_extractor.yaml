@@ -50,11 +50,18 @@ system_prompt: |
      - 提供具体的澄清问题
      - 置信度降低
   
-  ## 输出要求
+  ## 输出格式要求（重要！）
   
   - 准确判断意图类型
   - 提取所有可识别的实体
-  - 如果是 provide_info，构造 RawReview 对象
+  - **如果是 provide_info，extracted_review 必须是一个对象，包含以下字段：**
+    ```json
+    {
+      "content": "原始评论内容（必填，直接使用用户原话或整理后的内容）",
+      "source_metadata": {"mentor_name": "...", "university": "..."}
+    }
+    ```
+    **注意：不要写成 {"RawReview": {...}}，直接写成 {"content": "...", ...}**
   - 设置合理的置信度（0-1）
   - 如需澄清，提供具体问题
 

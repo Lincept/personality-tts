@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, Union
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from models.schemas import LLMConfig, AgentConfig
+from del_agent.models.schemas import LLMConfig, AgentConfig
 
 
 class ConfigManager:

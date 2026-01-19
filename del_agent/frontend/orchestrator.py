@@ -6,8 +6,9 @@ Frontend Orchestrator - 前端编排器/路由器
 创建：Phase 3.5
 """
 
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Callable
 import logging
+import json
 from datetime import datetime
 
 try:
@@ -147,7 +148,9 @@ class FrontendOrchestrator:
         backend_pipeline: Optional[DataFactoryPipeline] = None,
         enable_rag: bool = False,
         rag_retriever: Optional[Any] = None,
-        max_conversation_history: int = 10
+        max_conversation_history: int = 10,
+        trace_frontend: bool = False,
+        trace_print: Optional[Callable[[str], None]] = None
     ):
         """
         初始化前端编排器
@@ -164,6 +167,9 @@ class FrontendOrchestrator:
         self.enable_rag = enable_rag
         self.rag_retriever = rag_retriever
         self.max_conversation_history = max_conversation_history
+
+        self.trace_frontend = trace_frontend
+        self._trace_print = trace_print or print
         
         logger.info("Initializing FrontendOrchestrator...")
         
@@ -171,11 +177,19 @@ class FrontendOrchestrator:
         self.profile_manager = profile_manager or UserProfileManager()
         logger.info("✓ UserProfileManager initialized")
         
-        # 初始化智能体
-        self.info_extractor = InfoExtractorAgent(llm_provider)
+        # 初始化智能体（传递 trace 参数）
+        self.info_extractor = InfoExtractorAgent(
+            llm_provider,
+            trace_enabled=trace_frontend,
+            trace_print=self._trace_print
+        )
         logger.info("✓ InfoExtractorAgent initialized")
         
-        self.persona_agent = PersonaAgent(llm_provider)
+        self.persona_agent = PersonaAgent(
+            llm_provider,
+            trace_enabled=trace_frontend,
+            trace_print=self._trace_print
+        )
         logger.info("✓ PersonaAgent initialized")
         
         # 初始化后端流水线（可选，用于处理用户提供的信息）
@@ -189,6 +203,21 @@ class FrontendOrchestrator:
         self.conversations: Dict[str, ConversationContext] = {}
         
         logger.info("✓ FrontendOrchestrator initialized successfully")
+
+    def _truncate(self, text: str, max_len: int = 120) -> str:
+        if text is None:
+            return ""
+        text = str(text).replace("\n", " ")
+        return text if len(text) <= max_len else (text[: max_len - 3] + "...")
+
+    def _trace(self, title: str, payload: Dict[str, Any]):
+        if not self.trace_frontend:
+            return
+        try:
+            compact = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+        except Exception:
+            compact = str(payload)
+        self._trace_print(f"[FRONTEND] {title}: {self._truncate(compact, 300)}")
     
     def get_or_create_context(self, user_id: str) -> ConversationContext:
         """
@@ -230,9 +259,12 @@ class FrontendOrchestrator:
             # 1. 获取对话上下文和用户画像
             context = self.get_or_create_context(user_id)
             user_profile = self.profile_manager.get_profile(user_id)
-            
-            logger.info(f"Processing input for user: {user_id}")
-            logger.debug(f"User input: {user_input}")
+
+            self._trace("Input", {
+                "user_id": user_id,
+                "user_input": self._truncate(user_input, 160),
+                "history_chars": len(context.get_history_text() or "")
+            })
             
             # 2. 信息提取和意图识别
             extract_result = await self._extract_intent_and_entities(
@@ -240,13 +272,20 @@ class FrontendOrchestrator:
                 conversation_history=context.get_history_text(),
                 additional_context=additional_context
             )
-            
+
             intent_type = extract_result.intent_type
-            logger.info(f"Detected intent: {intent_type}")
+            self._trace("InfoExtractor.output", {
+                "intent_type": intent_type,
+                "confidence_score": getattr(extract_result, "confidence_score", None),
+                "entities": getattr(extract_result, "extracted_entities", None),
+                "has_extracted_review": bool(getattr(extract_result, "extracted_review", None)),
+                "clarification_q_count": len(getattr(extract_result, "clarification_questions", []) or [])
+            })
             
             # 3. 根据意图路由到不同的处理流程
             if intent_type == "chat":
                 # 闲聊模式
+                self._trace("Route", {"mode": "chat"})
                 response = await self._handle_chat(
                     user_input=user_input,
                     user_profile=user_profile,
@@ -256,6 +295,7 @@ class FrontendOrchestrator:
             
             elif intent_type == "query":
                 # 查询模式
+                self._trace("Route", {"mode": "query"})
                 response = await self._handle_query(
                     user_input=user_input,
                     user_profile=user_profile,
@@ -265,6 +305,7 @@ class FrontendOrchestrator:
             
             elif intent_type == "provide_info":
                 # 提供信息模式
+                self._trace("Route", {"mode": "provide_info"})
                 response = await self._handle_info_submission(
                     user_input=user_input,
                     user_profile=user_profile,
@@ -275,6 +316,7 @@ class FrontendOrchestrator:
             else:
                 # 未知意图，默认闲聊模式
                 logger.warning(f"Unknown intent type: {intent_type}, fallback to chat")
+                self._trace("Route", {"mode": "chat_fallback", "unknown_intent": intent_type})
                 response = await self._handle_chat(
                     user_input=user_input,
                     user_profile=user_profile,
@@ -298,6 +340,14 @@ class FrontendOrchestrator:
             
             # 6. 计算执行时间
             execution_time = (datetime.now() - start_time).total_seconds()
+
+            self._trace("Output", {
+                "intent_type": intent_type,
+                "response_preview": self._truncate(assistant_response, 200),
+                "execution_time": execution_time
+            })
+
+            metadata = response.get("metadata", {}) if isinstance(response, dict) else {}
             
             return {
                 "success": True,
@@ -305,13 +355,15 @@ class FrontendOrchestrator:
                 "intent_type": intent_type,
                 "response_text": assistant_response,
                 "extract_result": extract_result.model_dump() if extract_result else None,
+                "metadata": metadata,
                 "execution_time": execution_time,
                 "timestamp": datetime.now().isoformat(),
                 "additional_info": response.get("additional_info", {})
             }
         
         except Exception as e:
-            logger.error(f"Error processing user input: {e}", exc_info=True)
+            # 仅在异常时输出简洁信息
+            self._trace_print(f"[FRONTEND][ERROR] {type(e).__name__}: {str(e)}")
             execution_time = (datetime.now() - start_time).total_seconds()
             
             return {
@@ -369,7 +421,11 @@ class FrontendOrchestrator:
         Returns:
             回复字典
         """
-        logger.info("Handling chat mode")
+        self._trace("Persona.input", {
+            "mode": "chat",
+            "query_preview": self._truncate(user_input, 160),
+            "history_chars": len(conversation_history or "")
+        })
         
         # 使用 PersonaAgent 生成个性化回复
         persona_input = {
@@ -380,12 +436,21 @@ class FrontendOrchestrator:
         }
         
         persona_response = await self.persona_agent.process(persona_input)
+
+        self._trace("Persona.output", {
+            "mode": "chat",
+            "response_preview": self._truncate(persona_response.response_text, 200),
+            "applied_style": getattr(persona_response, "applied_style", None)
+        })
         
         return {
             "response_text": persona_response.response_text,
             "additional_info": {
                 "mode": "chat",
                 "applied_style": persona_response.applied_style
+            },
+            "metadata": {
+                "persona_strategy": persona_response.applied_style
             }
         }
     
@@ -408,20 +473,45 @@ class FrontendOrchestrator:
         Returns:
             回复字典
         """
-        logger.info("Handling query mode")
+        self._trace("Query.input", {
+            "mode": "query",
+            "query_preview": self._truncate(user_input, 160),
+            "enable_rag": bool(self.enable_rag and self.rag_retriever)
+        })
         
-        # 1. RAG检索（如果启用）
+        # 1. 后端检索 / RAG检索
         rag_results = []
-        if self.enable_rag and self.rag_retriever:
+        backend_query = {
+            "called": False,
+            "source": None,
+            "count": 0
+        }
+        if self.backend_pipeline and hasattr(self.backend_pipeline, "query_knowledge"):
             try:
-                logger.info("Performing RAG retrieval...")
+                backend_query["called"] = True
+                backend_query["source"] = "backend_pipeline"
+                rag_results = await self.backend_pipeline.query_knowledge(
+                    query=user_input,
+                    user_id=user_profile.user_id,
+                    limit=5,
+                    filters=extract_result.extracted_entities
+                )
+                backend_query["count"] = len(rag_results)
+                self._trace("Backend.query", backend_query)
+            except Exception as e:
+                self._trace_print(f"[BACKEND][ERROR] query: {type(e).__name__}: {str(e)}")
+        elif self.enable_rag and self.rag_retriever:
+            try:
                 rag_results = await self._retrieve_knowledge(
                     query=user_input,
                     entities=extract_result.extracted_entities
                 )
-                logger.info(f"Retrieved {len(rag_results)} results from RAG")
+                backend_query["called"] = True
+                backend_query["source"] = "rag_retriever"
+                backend_query["count"] = len(rag_results)
+                self._trace("RAG.query", backend_query)
             except Exception as e:
-                logger.warning(f"RAG retrieval failed: {e}")
+                self._trace_print(f"[FRONTEND][ERROR] RAG retrieval: {type(e).__name__}: {str(e)}")
         
         # 2. 使用 PersonaAgent 生成回复
         persona_input = {
@@ -432,6 +522,13 @@ class FrontendOrchestrator:
         }
         
         persona_response = await self.persona_agent.process(persona_input)
+
+        self._trace("Persona.output", {
+            "mode": "query",
+            "response_preview": self._truncate(persona_response.response_text, 200),
+            "applied_style": getattr(persona_response, "applied_style", None),
+            "rag_count": len(rag_results)
+        })
         
         return {
             "response_text": persona_response.response_text,
@@ -440,6 +537,11 @@ class FrontendOrchestrator:
                 "applied_style": persona_response.applied_style,
                 "rag_count": len(rag_results),
                 "extracted_entities": extract_result.extracted_entities
+            },
+            "metadata": {
+                "persona_strategy": persona_response.applied_style,
+                "rag_count": len(rag_results),
+                "backend_query": backend_query
             }
         }
     
@@ -462,7 +564,12 @@ class FrontendOrchestrator:
         Returns:
             回复字典
         """
-        logger.info("Handling info submission mode")
+        self._trace("InfoSubmission.input", {
+            "mode": "provide_info",
+            "mentor_name": extract_result.extracted_entities.get("mentor_name"),
+            "dimension": extract_result.extracted_entities.get("dimension"),
+            "has_extracted_review": bool(extract_result.extracted_review)
+        })
         
         # 1. 检查是否成功提取了 RawReview
         if not extract_result.extracted_review:
@@ -478,6 +585,9 @@ class FrontendOrchestrator:
                     "mode": "info_submission",
                     "status": "needs_clarification",
                     "extracted_entities": extract_result.extracted_entities
+                },
+                "metadata": {
+                    "backend_processing": {"called": False, "status": "needs_clarification"}
                 }
             }
         
@@ -485,19 +595,28 @@ class FrontendOrchestrator:
         processing_result = None
         if self.backend_pipeline:
             try:
-                logger.info("Sending RawReview to backend pipeline...")
-                processing_result = await self.backend_pipeline.process(
-                    extract_result.extracted_review
-                )
-                logger.info("✓ Backend processing completed")
+                self._trace("Backend.call", {
+                    "called": True,
+                    "raw_review_preview": self._truncate(extract_result.extracted_review.content, 160)
+                })
+                processing_result = await self.backend_pipeline.process(extract_result.extracted_review)
+                self._trace("Backend.result", {
+                    "status": "success",
+                    "mentor_id": getattr(processing_result, "mentor_id", None),
+                    "dimension": getattr(processing_result, "dimension", None),
+                    "weight_score": getattr(processing_result, "weight_score", None)
+                })
             except Exception as e:
-                logger.error(f"Backend processing failed: {e}", exc_info=True)
+                self._trace_print(f"[BACKEND][ERROR] {type(e).__name__}: {str(e)}")
                 return {
                     "response_text": "抱歉，处理您的信息时出现了问题。请稍后再试。",
                     "additional_info": {
                         "mode": "info_submission",
                         "status": "processing_failed",
                         "error": str(e)
+                    },
+                    "metadata": {
+                        "backend_processing": {"called": True, "status": "failed", "error": str(e)}
                     }
                 }
         else:
@@ -524,6 +643,12 @@ class FrontendOrchestrator:
         }
         
         persona_response = await self.persona_agent.process(persona_input)
+
+        self._trace("Persona.output", {
+            "mode": "info_submission",
+            "response_preview": self._truncate(persona_response.response_text, 200),
+            "applied_style": getattr(persona_response, "applied_style", None)
+        })
         
         return {
             "response_text": persona_response.response_text,
@@ -532,6 +657,13 @@ class FrontendOrchestrator:
                 "status": "processed",
                 "extracted_review": extract_result.extracted_review.model_dump(),
                 "processing_result": processing_result.model_dump() if processing_result else None
+            },
+            "metadata": {
+                "persona_strategy": persona_response.applied_style,
+                "backend_processing": {
+                    "called": bool(self.backend_pipeline),
+                    "status": "success" if processing_result else "skipped"
+                }
             }
         }
     

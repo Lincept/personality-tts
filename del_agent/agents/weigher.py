@@ -7,9 +7,14 @@ import logging
 from typing import Any, Dict, Optional
 from datetime import datetime, timedelta
 
-from core.base_agent import BaseAgent
-from core.llm_adapter import LLMProvider
-from models.schemas import WeightAnalysisResult, RawReview
+try:
+    from ..core.base_agent import BaseAgent
+    from ..core.llm_adapter import LLMProvider
+    from ..models.schemas import WeightAnalysisResult, RawReview
+except (ImportError, ValueError):
+    from core.base_agent import BaseAgent
+    from core.llm_adapter import LLMProvider
+    from models.schemas import WeightAnalysisResult, RawReview
 
 logger = logging.getLogger(__name__)
 

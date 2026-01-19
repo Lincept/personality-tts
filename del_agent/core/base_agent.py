@@ -122,7 +122,7 @@ class BaseAgent(ABC):
         """
         return True
     
-    def process(self, raw_input: Any, **kwargs) -> BaseModel:
+    async def process(self, raw_input: Any, **kwargs) -> BaseModel:
         """
         处理输入数据的主方法
         
@@ -187,13 +187,36 @@ class BaseAgent(ABC):
             execution_time = time.time() - start_time
             self.logger.error(f"Processing failed after {execution_time:.2f}s: {str(e)}")
             
-            # 创建错误结果
-            error_result = self.get_output_schema()(
-                success=False,
-                error_message=str(e),
-                execution_time=execution_time
-            )
+            # 创建错误结果 - 为所有可能的必需字段提供默认值
+            output_schema = self.get_output_schema()
+            error_data = {
+                'success': False,
+                'error_message': str(e),
+                'execution_time': execution_time
+            }
             
+            # 检查schema的必需字段并提供默认值
+            if hasattr(output_schema, 'model_fields'):
+                for field_name, field_info in output_schema.model_fields.items():
+                    if field_info.is_required() and field_name not in error_data:
+                        # 为必需字段提供类型适当的默认值
+                        field_type = field_info.annotation
+                        if field_type == str or (hasattr(field_type, '__origin__') and str in str(field_type)):
+                            error_data[field_name] = ""
+                        elif field_type == float or (hasattr(field_type, '__origin__') and float in str(field_type)):
+                            error_data[field_name] = 0.0
+                        elif field_type == int or (hasattr(field_type, '__origin__') and int in str(field_type)):
+                            error_data[field_name] = 0
+                        elif field_type == bool:
+                            error_data[field_name] = False
+                        elif field_type == list or (hasattr(field_type, '__origin__') and field_type.__origin__ == list):
+                            error_data[field_name] = []
+                        elif field_type == dict or (hasattr(field_type, '__origin__') and field_type.__origin__ == dict):
+                            error_data[field_name] = {}
+                        else:
+                            error_data[field_name] = None
+            
+            error_result = output_schema(**error_data)
             return error_result
     
     def process_with_verification(
