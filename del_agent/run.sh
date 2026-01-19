@@ -1,9 +1,9 @@
 #!/bin/bash
 # Del Agent 快速启动脚本
 
-# 获取脚本所在目录的父目录（项目根目录）
+# 获取脚本所在目录（项目根目录）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
 
 # 设置 PYTHONPATH
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"

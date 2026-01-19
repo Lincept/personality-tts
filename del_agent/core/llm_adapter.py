@@ -98,6 +98,7 @@ class OpenAICompatibleProvider(LLMProvider):
         base_url: Optional[str] = None,
         timeout: int = 30,
         api_secret: Optional[str] = None,
+        reasoning_effort: str = "minimal",
         **kwargs
     ):
         """
@@ -109,12 +110,14 @@ class OpenAICompatibleProvider(LLMProvider):
             base_url: 基础URL，默认为OpenAI官方地址
             timeout: 超时时间
             api_secret: API密钥（用于豆包等需要双密钥的服务商）
+            reasoning_effort: 推理强度（豆包专用）：minimal/low/medium/high，默认minimal（不思考）
             **kwargs: 其他配置参数
         """
         super().__init__(model_name, **kwargs)
 
         self.base_url = base_url
         self._is_ark_endpoint = bool(base_url and "volces.com" in base_url)
+        self.reasoning_effort = reasoning_effort
         
         # 禁用代理 - 通过环境变量
         os.environ['NO_PROXY'] = '*'
@@ -137,9 +140,12 @@ class OpenAICompatibleProvider(LLMProvider):
         self.logger.info(f"Initialized OpenAI-compatible provider with model: {model_name}")
 
     def _apply_ark_thinking_override(self, request_params: Dict[str, Any]) -> None:
-        """对方舟(ARK)端点强制关闭 thinking 能力。"""
+        """对方舟(ARK)端点设置 reasoning_effort 参数。"""
         if self._is_ark_endpoint:
-            request_params["thinking"] = {"type": "disabled"}
+            # 豆包 API 使用 reasoning_effort 控制推理程度
+            # minimal: 不思考, low/medium/high: 不同程度的思考
+            request_params.pop("thinking", None)  # 移除可能存在的thinking参数
+            request_params["reasoning_effort"] = self.reasoning_effort
     
     @retry(
         stop=stop_after_attempt(3),

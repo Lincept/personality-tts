@@ -152,7 +152,7 @@ def test_comment_cleaner():
         print("✓ 评论清洗成功！")
         print(f"\n清洗结果:")
         print(f"  - 事实内容: {result.factual_content}")
-        print(f"  - 情绪强度: {result.sentiment_intensity}")
+        print(f"  - 情绪强度: {result.emotional_intensity}")
         print(f"  - 原始评论长度: {len(review.content)} 字符")
         print(f"  - 清洗后长度: {len(result.factual_content)} 字符")
         print_separator()
@@ -196,13 +196,13 @@ def test_full_pipeline():
             print(f"原始内容: {review.content[:50]}...")
             
             try:
-                result = pipeline.process_review(review)
+                result = pipeline.process_raw_review(review)
                 results.append(result)
                 
                 print(f"✓ 处理成功")
-                print(f"  - 知识节点ID: {result.node_id}")
-                print(f"  - 置信度: {result.confidence:.2f}")
-                print(f"  - 处理阶段: {len(result.processing_stages)}")
+                print(f"  - 导师ID: {result.mentor_id}")
+                print(f"  - 维度: {result.dimension}")
+                print(f"  - 权重评分: {result.weight_score:.2f}")
                 
             except Exception as e:
                 logger.error(f"✗ 处理失败: {str(e)}")
@@ -218,7 +218,7 @@ def test_full_pipeline():
         
         # 显示黑话词典
         print(f"\n黑话词典:")
-        slang_dict = pipeline.decoder.get_slang_dictionary()
+        slang_dict = pipeline.decoder.dictionary_store.get_all()
         for slang, definition in slang_dict.items():
             print(f"  - '{slang}': {definition}")
         

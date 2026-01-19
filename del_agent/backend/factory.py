@@ -122,6 +122,9 @@ class DataFactoryPipeline:
         start_time = datetime.now()
         self.stats["total_processed"] += 1
         
+        # 初始化步骤耗时记录
+        step_timings = {}
+        
         try:
             logger.info(f"Processing raw review: {raw_review.content[:50]}...")
             
@@ -133,6 +136,7 @@ class DataFactoryPipeline:
             )
             
             # Step 1: 清洗评论
+            step1_start = datetime.now()
             logger.info("Step 1/4: Cleaning comment...")
             if use_verification and self.critic:
                 cleaned = self.cleaner.process_with_verification(
@@ -145,14 +149,24 @@ class DataFactoryPipeline:
             else:
                 cleaned = self.cleaner.process(raw_review.content)
             
-            logger.info(f"✓ Cleaned: {cleaned.factual_content[:50]}...")
+            step_timings["step1_cleaning"] = (datetime.now() - step1_start).total_seconds()
+            logger.info(
+                f"✓ Cleaned in {step_timings['step1_cleaning']:.2f}s: "
+                f"{cleaned.factual_content[:50]}..."
+            )
             
             # Step 2: 解码黑话
+            step2_start = datetime.now()
             logger.info("Step 2/4: Decoding slang...")
             decoded = self.decoder.process(cleaned.factual_content)
-            logger.info(f"✓ Decoded: {len(decoded.slang_dictionary)} slang terms found")
+            step_timings["step2_decoding"] = (datetime.now() - step2_start).total_seconds()
+            logger.info(
+                f"✓ Decoded in {step_timings['step2_decoding']:.2f}s: "
+                f"{len(decoded.slang_dictionary)} slang terms found"
+            )
             
             # Step 3: 计算权重
+            step3_start = datetime.now()
             logger.info("Step 3/4: Analyzing weight...")
             weight_input = {
                 "content": decoded.decoded_text,
@@ -160,9 +174,14 @@ class DataFactoryPipeline:
                 "timestamp": raw_review.timestamp
             }
             weight_result = self.weigher.process(weight_input)
-            logger.info(f"✓ Weight score: {weight_result.weight_score:.2f}")
+            step_timings["step3_weighing"] = (datetime.now() - step3_start).total_seconds()
+            logger.info(
+                f"✓ Weight analyzed in {step_timings['step3_weighing']:.2f}s: "
+                f"score={weight_result.weight_score:.2f}"
+            )
             
             # Step 4: 结构化压缩
+            step4_start = datetime.now()
             logger.info("Step 4/4: Compressing to knowledge node...")
             compression_input = {
                 "factual_content": decoded.decoded_text,
@@ -172,7 +191,11 @@ class DataFactoryPipeline:
                 "source_metadata": raw_review.source_metadata
             }
             compression_result = self.compressor.process(compression_input)
-            logger.info(f"✓ Compressed: dimension={compression_result.structured_node.dimension}")
+            step_timings["step4_compression"] = (datetime.now() - step4_start).total_seconds()
+            logger.info(
+                f"✓ Compressed in {step_timings['step4_compression']:.2f}s: "
+                f"dimension={compression_result.structured_node.dimension}"
+            )
             
             # 获取最终的知识节点
             knowledge_node = compression_result.structured_node
@@ -181,11 +204,20 @@ class DataFactoryPipeline:
             self.stats["successful"] += 1
             execution_time = (datetime.now() - start_time).total_seconds()
             
+            # 输出详细的性能报告
             logger.info(
-                f"✅ Pipeline completed successfully in {execution_time:.2f}s | "
-                f"Mentor: {knowledge_node.mentor_id} | "
-                f"Dimension: {knowledge_node.dimension} | "
-                f"Weight: {knowledge_node.weight_score:.2f}"
+                f"✅ Pipeline completed successfully in {execution_time:.2f}s\n"
+                f"   ├─ Step 1 (Cleaning):    {step_timings['step1_cleaning']:.2f}s "
+                f"({step_timings['step1_cleaning']/execution_time*100:.1f}%)\n"
+                f"   ├─ Step 2 (Decoding):    {step_timings['step2_decoding']:.2f}s "
+                f"({step_timings['step2_decoding']/execution_time*100:.1f}%)\n"
+                f"   ├─ Step 3 (Weighing):    {step_timings['step3_weighing']:.2f}s "
+                f"({step_timings['step3_weighing']/execution_time*100:.1f}%)\n"
+                f"   └─ Step 4 (Compression): {step_timings['step4_compression']:.2f}s "
+                f"({step_timings['step4_compression']/execution_time*100:.1f}%)\n"
+                f"   Result: Mentor={knowledge_node.mentor_id} | "
+                f"Dimension={knowledge_node.dimension} | "
+                f"Weight={knowledge_node.weight_score:.2f}"
             )
             
             return knowledge_node
