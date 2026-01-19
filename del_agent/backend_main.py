@@ -57,7 +57,10 @@ logging.disable(logging.CRITICAL)
 from del_agent.models.schemas import RawReview, StructuredKnowledgeNode
 from del_agent.backend.factory import DataFactoryPipeline
 from del_agent.core.llm_adapter import OpenAICompatibleProvider
-from del_agent.storage.vector_store import VectorStore, create_vector_store
+from del_agent.storage.unified_store import (
+    KnowledgeStore, KnowledgeRecord,
+    create_knowledge_store
+)
 from del_agent.utils.config import ConfigManager
 
 
@@ -69,7 +72,8 @@ class BackendProcessor:
         data_dir: str,
         config_path: Optional[str] = None,
         trace_enabled: Optional[bool] = None,
-        enable_verification: bool = False
+        enable_verification: bool = False,
+        storage_backend: str = "json"
     ):
         """
         初始化处理器
@@ -79,7 +83,9 @@ class BackendProcessor:
             config_path: 配置文件路径
             trace_enabled: 是否启用跟踪输出（None则从.env读取）
             enable_verification: 是否启用核验
+            storage_backend: 存储后端 ("json", "mem0", "hybrid")
         """
+        self.storage_backend = storage_backend
         self.data_dir = Path(data_dir)
         # 优先使用参数，否则从环境变量读取
         self.trace_enabled = trace_enabled if trace_enabled is not None else ENV_TRACE_ENABLED
@@ -128,20 +134,26 @@ class BackendProcessor:
         )
         self._verbose(f"LLM Provider initialized: {llm_config.model_name}")
         
-        # 创建 Memory Manager 和 Vector Store
-        mem_config = (
-            self.config.get_global_config("mem0_config")
-            or self.config.get_global_config("memory")
-            or {}
+        # 创建知识存储（支持 json, mem0, hybrid）
+        store_config = {
+            "base_dir": str(PROJECT_ROOT / "data" / "knowledge_store"),
+            "json_base_dir": str(PROJECT_ROOT / "data" / "knowledge_store"),
+            "llm_provider": "qwen",  # Mem0 使用通义千问
+            # API Key 从环境变量自动获取
+        }
+        self.knowledge_store = create_knowledge_store(
+            backend=self.storage_backend,
+            config=store_config,
+            verbose=self.verbose
         )
-        self.vector_store = create_vector_store(mem_config)
-        self._verbose(f"Vector Store enabled: {self.vector_store.enabled}")
+        self._verbose(f"Knowledge Store backend: {self.knowledge_store.backend_name}")
+        self._verbose(f"Knowledge Store enabled: {self.knowledge_store.enabled}")
         
-        # 创建数据工厂
+        # 创建数据工厂（不传递 vector_store，使用本地 JSON 存储）
         self.pipeline = DataFactoryPipeline(
             llm_provider=self.llm_provider,
             enable_verification=self.enable_verification,
-            vector_store=self.vector_store,
+            vector_store=None,  # 不使用 Mem0 VectorStore
             trace_backend=self.trace_enabled,
             trace_print=self._trace_print
         )
@@ -280,8 +292,8 @@ class BackendProcessor:
                 results.append(node)
                 self.stats["processed_reviews"] += 1
                 
-                # 存储到向量数据库
-                if store_results and self.vector_store.enabled:
+                # 存储到本地 JSON 存储
+                if store_results and self.knowledge_store.enabled:
                     success = self._store_knowledge_node(node, review.source_metadata)
                     if success:
                         self.stats["stored_records"] += 1
@@ -306,7 +318,7 @@ class BackendProcessor:
         source_metadata: Dict[str, Any]
     ) -> bool:
         """
-        存储知识节点到向量数据库
+        存储知识节点到本地 JSON 存储
         
         Args:
             node: 知识节点
@@ -340,10 +352,10 @@ class BackendProcessor:
             "stored_at": datetime.now().isoformat()
         }
         
-        # 使用 mentor_id 作为 user_id 分组存储
+        # 使用 sha1 作为 user_id 分组存储
         user_id = source_metadata.get("sha1", "default")
         
-        return self.vector_store.insert(
+        return self.knowledge_store.insert(
             content=content,
             user_id=user_id,
             metadata=metadata,
@@ -438,27 +450,32 @@ class BackendProcessor:
         Returns:
             记录列表
         """
-        if not self.vector_store.enabled:
-            print("⚠️  向量存储未启用")
+        if not self.knowledge_store.enabled:
+            print("⚠️  知识存储未启用")
             return []
         
         print("\n" + "=" * 60)
         print("存储记录展示")
         print("=" * 60)
         
+        # 先显示存储统计
+        stats = self.knowledge_store.get_stats()
+        print(f"📊 存储后端: {self.knowledge_store.backend_name}")
+        print(f"📊 存储位置: {stats.get('storage_path', 'N/A')}")
+        print(f"📊 总记录数: {stats.get('total_records', 0)}")
+        
         if query:
             # 搜索模式
-            print(f"🔍 搜索: '{query}'")
-            records = self.vector_store.search(
+            print(f"\n🔍 搜索: '{query}'")
+            records = self.knowledge_store.search(
                 query=query,
-                user_id=user_id or "default",
+                user_id=user_id,
                 limit=limit
             )
         else:
             # 获取所有记录
-            print(f"📋 获取所有记录 (user_id={user_id or 'default'})")
-            records = self.vector_store.get_all(user_id=user_id or "default")
-            records = records[:limit] if records else []
+            print(f"\n📋 获取记录 (user_id={user_id or 'all'}, limit={limit})")
+            records = self.knowledge_store.get_all(user_id=user_id, limit=limit)
         
         if not records:
             print("  没有找到记录")
@@ -469,22 +486,23 @@ class BackendProcessor:
         for i, record in enumerate(records, 1):
             print(f"--- 记录 {i} ---")
             print(f"ID: {record.id or 'N/A'}")
-            print(f"内容:\n{record.content[:200]}...")
+            if record.created_at:
+                print(f"创建时间: {record.created_at}")
+            if record.score > 0:
+                print(f"相关度: {record.score:.2f}")
+            content_preview = record.content[:300] if len(record.content) > 300 else record.content
+            print(f"内容:\n{content_preview}")
             if record.metadata:
-                print(f"元数据: {json.dumps(record.metadata, ensure_ascii=False, indent=2)[:200]}...")
+                # 显示关键元数据
+                meta = record.metadata
+                print(f"  维度: {meta.get('dimension', 'N/A')}")
+                print(f"  权重: {meta.get('weight_score', 'N/A')}")
+                print(f"  教授: {meta.get('professor', 'N/A')}")
             print()
         
         print("=" * 60)
         
-        return [
-            {
-                "id": r.id,
-                "content": r.content,
-                "score": r.score,
-                "metadata": r.metadata
-            }
-            for r in records
-        ]
+        return [record.to_dict() for record in records]
 
 
 def setup_logging(verbose: bool = False):
@@ -504,11 +522,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python backend_main.py process --limit 5          # 处理前5个文件
+  python backend_main.py process --limit 5          # 处理前5个文件（JSON存储）
+  python backend_main.py process --limit 5 --store mem0   # 使用Mem0存储
+  python backend_main.py process --limit 5 --store hybrid # 混合存储
   python backend_main.py process --trace            # 处理并输出跟踪信息
   python backend_main.py show --limit 10            # 展示10条存储记录
   python backend_main.py show --query "张老师"      # 搜索包含"张老师"的记录
-  python backend_main.py stats                       # 查看流水线统计
+  python backend_main.py stats                       # 查看存储统计
         """
     )
     
@@ -537,6 +557,11 @@ def main():
         "--verify", action="store_true",
         help="启用核验循环"
     )
+    process_parser.add_argument(
+        "--store", "-s", type=str, default="json",
+        choices=["json", "mem0", "hybrid"],
+        help="存储后端: json(默认), mem0(向量), hybrid(混合)"
+    )
     
     # show 子命令
     show_parser = subparsers.add_parser("show", help="展示存储的记录")
@@ -557,13 +582,23 @@ def main():
         default=str(PROJECT_ROOT / "data" / "professors"),
         help="数据目录路径"
     )
+    show_parser.add_argument(
+        "--store", "-s", type=str, default="json",
+        choices=["json", "mem0", "hybrid"],
+        help="存储后端: json(默认), mem0(向量), hybrid(混合)"
+    )
     
     # stats 子命令
-    stats_parser = subparsers.add_parser("stats", help="查看流水线统计")
+    stats_parser = subparsers.add_parser("stats", help="查看存储统计")
     stats_parser.add_argument(
         "--data-dir", "-d", type=str,
         default=str(PROJECT_ROOT / "data" / "professors"),
         help="数据目录路径"
+    )
+    stats_parser.add_argument(
+        "--store", "-s", type=str, default="json",
+        choices=["json", "mem0", "hybrid"],
+        help="存储后端: json(默认), mem0(向量), hybrid(混合)"
     )
     
     # 通用参数
@@ -582,6 +617,9 @@ def main():
     # 获取数据目录
     data_dir = getattr(args, "data_dir", str(PROJECT_ROOT / "data" / "professors"))
     
+    # 获取存储后端
+    storage_backend = getattr(args, "store", "json")
+    
     # 确定 trace 状态：命令行 --trace 优先，否则使用环境变量
     trace_enabled = getattr(args, "trace", False) or ENV_TRACE_ENABLED
     
@@ -590,7 +628,8 @@ def main():
         data_dir=data_dir,
         config_path=args.config,
         trace_enabled=trace_enabled,
-        enable_verification=getattr(args, "verify", False)
+        enable_verification=getattr(args, "verify", False),
+        storage_backend=storage_backend
     )
     
     # 执行命令
@@ -608,12 +647,51 @@ def main():
         )
     
     elif args.command == "stats":
+        # 流水线统计
         stats = processor.pipeline.get_statistics()
         print("\n" + "=" * 40)
         print("流水线统计信息")
         print("=" * 40)
         for key, value in stats.items():
             print(f"  {key}: {value}")
+        
+        # 存储统计
+        store_stats = processor.knowledge_store.get_stats()
+        print("\n" + "=" * 40)
+        print("知识存储统计信息")
+        print("=" * 40)
+        print(f"  存储后端: {store_stats.get('backend', 'N/A')}")
+        
+        # 根据后端类型显示不同的统计
+        if store_stats.get('backend') == 'hybrid(mem0+json)':
+            # 混合存储
+            json_stats = store_stats.get('json', {})
+            mem0_stats = store_stats.get('mem0', {})
+            
+            print("\n  JSON 存储:")
+            print(f"    存储路径: {json_stats.get('storage_path', 'N/A')}")
+            print(f"    总记录数: {json_stats.get('total_records', 0)}")
+            if json_stats.get('by_dimension'):
+                print("    按维度统计:")
+                for dim, count in json_stats['by_dimension'].items():
+                    print(f"      {dim}: {count}")
+            
+            print("\n  Mem0 存储:")
+            print(f"    存储路径: {mem0_stats.get('storage_path', 'N/A')}")
+            print(f"    已启用: {mem0_stats.get('enabled', False)}")
+        else:
+            # 单一存储
+            print(f"  存储路径: {store_stats.get('storage_path', 'N/A')}")
+            print(f"  总记录数: {store_stats.get('total_records', 0)}")
+            
+            if store_stats.get('by_dimension'):
+                print("\n  按维度统计:")
+                for dim, count in store_stats['by_dimension'].items():
+                    print(f"    {dim}: {count}")
+            
+            if store_stats.get('by_user'):
+                print(f"\n  按用户/教授统计: {len(store_stats['by_user'])} 个分组")
+        
         print("=" * 40)
 
 
