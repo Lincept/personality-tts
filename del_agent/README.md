@@ -8,9 +8,11 @@
 - **核验循环机制**：通过 `CriticAgent` 实现质量控制
 - **多模型支持**：支持 OpenAI、DeepSeek、Moonshot、豆包等多种 LLM
 - **完整数据流水线**：从原始评论到结构化知识节点的端到端处理
+- **批量数据处理**：支持批量处理教授评论数据，可限制数量或处理全部 ✨ 新增
 - **动态黑话词典**：支持 JSON 和 Mem0 两种存储方式
 - **权重评估算法**：基于身份可信度、时间衰减、离群点检测
 - **结构化输出**：强制 JSON 格式，使用 Pydantic 进行数据验证
+- **多模式运行**：支持文本交互、语音交互和数据处理三种模式 ✨ 新增
 
 ## 📊 当前版本状态
 
@@ -122,15 +124,28 @@ cd del_agent
 # 方式二：测试数据工厂流水线 ✨
 python tests/test_pipeline.py
 
-# 方式三：测试各个智能体
+# 方式三：批量处理教授评论数据 ✨ 新增
+python main.py --mode process              # 处理全部数据
+python main.py --mode process --limit 10   # 处理前10个文件
+python main.py --mode process --output ./results  # 指定输出目录
+
+# 方式四：文本交互模式
+python main.py --mode text
+
+# 方式五：语音交互模式
+python main.py --mode voice
+
+# 方式六：测试各个智能体
 python tests/test_critic.py
 python tests/test_slang_decoder.py
 python tests/test_verification.py
 
-# 方式四：直接运行（需要设置 PYTHONPATH）
+# 方式七：直接运行（需要设置 PYTHONPATH）
 cd /path/to/AI-Sandbox
 PYTHONPATH=$(pwd):$PYTHONPATH python del_agent/examples/demo.py
 ```
+
+**数据处理功能**：详细说明请参阅 [PROCESS_DATA.md](PROCESS_DATA.md)
 
 ### 3. 基本使用
 

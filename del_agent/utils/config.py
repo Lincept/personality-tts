@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, Union
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from ..models.schemas import LLMConfig, AgentConfig
+from models.schemas import LLMConfig, AgentConfig
 
 
 class ConfigManager:
@@ -98,7 +98,14 @@ class ConfigManager:
                     'qwen': 'QWEN_API_KEY',
                 }
                 env_key = env_key_map.get(name, f"{name.upper()}_API_KEY")
-                config['api_key'] = os.getenv(env_key, os.getenv('LLM_API_KEY', ''))
+
+                # 豆包（doubao）兼容旧命名：先检查 ARK_API_KEY，再检查 DOBAO_API_KEY
+                if name == 'doubao':
+                    api_key_value = os.getenv('ARK_API_KEY') or os.getenv(env_key) or os.getenv('LLM_API_KEY', '')
+                else:
+                    api_key_value = os.getenv(env_key, os.getenv('LLM_API_KEY', ''))
+
+                config['api_key'] = api_key_value
             
             # 从环境变量获取API密钥（用于豆包等需要双密钥的服务商）
             if name == 'doubao' and ('api_secret' not in config or not config['api_secret']):

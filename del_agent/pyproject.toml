@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "del_agent"
+version = "2.3.0"
+description = "AI Data Factory - 多智能体评价处理与交互平台"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+
+dependencies = [
+  "python-dotenv",
+  "pydantic>=1.10,<3",
+  "httpx",
+  "openai",
+  "PyYAML",
+  "tenacity",
+  "jinja2"
+]
+
+[project.scripts]
+del-agent = "main:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "flake8",
+    "black",
+    "mypy"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["del_agent"]
+
+[tool.hatch.envs]
+[tool.hatch.envs.dev]
+description = "Development environment (for running tests and linting)"
+# Use the current Python interpreter; hatch will pick a compatible Python
+dependencies = [
+  "pytest",
+  "python-dotenv",
+  "pydantic",
+  "httpx",
+  "openai",
+  "flake8",
+  "black",
+  "mypy"
+]
+
+[tool.hatch.envs.default]
+description = "Default runtime environment"
+dependencies = [
+  "python-dotenv",
+  "pydantic",
+  "httpx",
+  "openai"
+]

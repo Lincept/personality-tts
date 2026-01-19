@@ -19,8 +19,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from del_agent.frontend.orchestrator import FrontendOrchestrator
 from del_agent.frontend.voice_adapter import VoiceAdapter, start_voice_conversation
-from del_agent.core.llm_adapter import LLMProvider
+from del_agent.core.llm_adapter import LLMProvider, OpenAICompatibleProvider
 from del_agent.utils.config import ConfigManager
+from del_agent.backend.factory import DataFactoryPipeline
+from del_agent.models.schemas import RawReview
+import json
+from datetime import datetime
+from typing import List, Optional
+import os
 
 # 配置日志
 logging.basicConfig(
@@ -173,6 +179,208 @@ class DELAgent:
             enable_memory=enable_memory,
             enable_aec=enable_aec
         )
+    
+    async def run_data_processing(
+        self,
+        limit: Optional[int] = None,
+        output_dir: Optional[str] = None
+    ) -> None:
+        """
+        运行数据处理模式
+        
+        处理data/professors目录中的评论数据
+        
+        Args:
+            limit: 限制处理的文件数量，None表示处理全部
+            output_dir: 输出目录，保存处理结果
+        """
+        print("=" * 60)
+        print("DEL Agent - 数据处理模式")
+        print("=" * 60)
+        
+        # 获取所有教授数据文件
+        professors_dir = Path(__file__).parent / "data" / "professors"
+        if not professors_dir.exists():
+            print(f"❌ 错误: 找不到目录 {professors_dir}")
+            return
+        
+        json_files = list(professors_dir.glob("*.json"))
+        if not json_files:
+            print(f"❌ 错误: {professors_dir} 中没有找到JSON文件")
+            return
+        
+        # 限制处理数量
+        if limit and limit > 0:
+            json_files = json_files[:limit]
+            print(f"处理文件数: {len(json_files)} (限制前 {limit} 个)")
+        else:
+            print(f"处理文件数: {len(json_files)} (全部)")
+        
+        print("-" * 60)
+        
+        # 初始化LLM Provider
+        try:
+            # 从配置管理器获取LLM配置
+            llm_config = self.config_manager.get_llm_config('doubao')
+            
+            # 创建OpenAI兼容的Provider
+            llm_provider = OpenAICompatibleProvider(
+                model_name=llm_config.model_name,
+                api_key=llm_config.api_key,
+                base_url=llm_config.base_url,
+                timeout=llm_config.timeout
+            )
+            print(f"✓ LLM Provider 初始化成功 (model: {llm_config.model_name})")
+        except Exception as e:
+            print(f"❌ LLM Provider 初始化失败: {e}")
+            return
+        
+        # 初始化数据工厂流水线
+        try:
+            pipeline = DataFactoryPipeline(
+                llm_provider=llm_provider,
+                enable_verification=False,  # 可配置
+                max_retries=3,
+                strictness_level=0.7
+            )
+            print("✓ DataFactoryPipeline 初始化成功")
+        except Exception as e:
+            print(f"❌ DataFactoryPipeline 初始化失败: {e}")
+            return
+        
+        print("-" * 60)
+        print()
+        
+        # 收集所有评论
+        all_reviews = []
+        file_review_mapping = []  # 记录每个review来自哪个文件
+        
+        for json_file in json_files:
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                # 提取评论
+                reviews = data.get("data", {}).get("reviews", [])
+                professor_info = data.get("input", {})
+                
+                print(f"📄 {json_file.name}: {len(reviews)} 条评论")
+                
+                # 转换为RawReview格式
+                for review in reviews:
+                    description = review.get("description", "").strip()
+                    if not description:
+                        continue
+                    
+                    # 解析created_at时间戳
+                    created_at_str = review.get("created_at")
+                    try:
+                        timestamp = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                    except:
+                        timestamp = datetime.now()
+                    
+                    # 构建source_metadata
+                    source_metadata = {
+                        "professor": professor_info.get("professor", ""),
+                        "university": professor_info.get("university", ""),
+                        "department": professor_info.get("department", ""),
+                        "review_id": review.get("id", ""),
+                        "sha1": data.get("sha1", ""),
+                        "anonymous": review.get("anonymous", True),
+                        "student_relation": review.get("studentProfRelation", 0),
+                        "academic": review.get("academic", 0),
+                        "job_potential": review.get("jobPotential", 0),
+                        "file": json_file.name
+                    }
+                    
+                    raw_review = RawReview(
+                        content=description,
+                        source_metadata=source_metadata,
+                        timestamp=timestamp
+                    )
+                    
+                    all_reviews.append(raw_review)
+                    file_review_mapping.append({
+                        "file": json_file.name,
+                        "professor": professor_info.get("display", "Unknown")
+                    })
+            
+            except Exception as e:
+                print(f"❌ 处理文件 {json_file.name} 时出错: {e}")
+                continue
+        
+        print()
+        print("=" * 60)
+        print(f"共收集到 {len(all_reviews)} 条评论，开始处理...")
+        print("=" * 60)
+        print()
+        
+        if not all_reviews:
+            print("❌ 没有找到有效的评论数据")
+            return
+        
+        # 批量处理评论
+        try:
+            results = pipeline.process_batch(
+                all_reviews,
+                continue_on_error=True
+            )
+            
+            print()
+            print("=" * 60)
+            print("处理完成")
+            print("=" * 60)
+            
+            # 显示统计信息
+            stats = pipeline.get_statistics()
+            print(f"总处理数: {stats['total_processed']}")
+            print(f"成功数: {stats['successful']}")
+            print(f"失败数: {stats['failed']}")
+            print(f"成功率: {stats['success_rate']*100:.1f}%")
+            
+            # 保存结果
+            if output_dir:
+                output_path = Path(output_dir)
+            else:
+                output_path = Path(__file__).parent / "data" / "processed"
+            
+            output_path.mkdir(parents=True, exist_ok=True)
+            
+            # 保存处理结果
+            timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = output_path / f"processed_reviews_{timestamp_str}.json"
+            
+            output_data = {
+                "metadata": {
+                    "processed_at": datetime.now().isoformat(),
+                    "total_files": len(json_files),
+                    "total_reviews": len(all_reviews),
+                    "statistics": stats
+                },
+                "results": [
+                    {
+                        "mentor_id": result.mentor_id,
+                        "dimension": result.dimension,
+                        "fact_content": result.fact_content,
+                        "original_nuance": result.original_nuance,
+                        "weight_score": result.weight_score,
+                        "tags": result.tags,
+                        "last_updated": result.last_updated.isoformat(),
+                        "source": file_review_mapping[i] if i < len(file_review_mapping) else {}
+                    }
+                    for i, result in enumerate(results)
+                ]
+            }
+            
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(output_data, f, ensure_ascii=False, indent=2)
+            
+            print()
+            print(f"✓ 结果已保存到: {output_file}")
+            
+        except Exception as e:
+            print(f"❌ 批量处理失败: {e}")
+            logger.error(f"Batch processing error: {e}", exc_info=True)
 
 
 async def main():
@@ -191,6 +399,15 @@ async def main():
   # 语音交互模式（音频文件）
   python main.py --mode voice --audio data/test.wav
   
+  # 数据处理模式（处理全部数据）
+  python main.py --mode process
+  
+  # 数据处理模式（处理前10个文件）
+  python main.py --mode process --limit 10
+  
+  # 数据处理模式（指定输出目录）
+  python main.py --mode process --output ./results
+  
   # 启用记忆存储
   python main.py --mode voice --memory
   
@@ -202,9 +419,9 @@ async def main():
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["text", "voice"],
+        choices=["text", "voice", "process"],
         default="text",
-        help="交互模式：text（文本）或 voice（语音）"
+        help="运行模式：text（文本交互）、voice（语音交互）或 process（数据处理）"
     )
     
     parser.add_argument(
@@ -239,6 +456,20 @@ async def main():
         help="启用调试模式"
     )
     
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="限制处理的文件数量（仅在process模式）"
+    )
+    
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="输出目录路径（仅在process模式）"
+    )
+    
     args = parser.parse_args()
     
     # 设置日志级别
@@ -256,6 +487,12 @@ async def main():
         if args.mode == "text":
             # app.initialize_text_mode()
             await app.run_text_mode()
+        elif args.mode == "process":
+            # 数据处理模式
+            await app.run_data_processing(
+                limit=args.limit,
+                output_dir=args.output
+            )
         else:  # voice
             # 检查环境配置
             is_valid, missing = VoiceAdapter.validate_config()
