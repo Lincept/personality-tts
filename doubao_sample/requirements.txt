@@ -7,3 +7,6 @@ dataclasses
 typing-extensions
 sounddevice
 numpy
+logging
+dotenv
+mem0ai

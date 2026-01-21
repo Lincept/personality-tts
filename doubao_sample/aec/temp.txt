@@ -1,1 +1,0 @@
-curl -L -O https://raw.githubusercontent.com/huangjunsen0406/py-xiaozhi/feature/aec/libs/webrtc_apm/macos/arm64/libwebrtc_apm.dylib

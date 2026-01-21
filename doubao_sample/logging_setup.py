@@ -1,121 +1,61 @@
-"""doubao_sample.logging_setup
-
-为 doubao_sample 提供一个简单的“可选落盘”能力：
-- 默认不写文件
-- 开启后将 stdout/stderr tee 到 log/ 目录下，方便保留运行日志
-
-环境变量（在 doubao_sample/.env 中配置）：
-- DOUBAO_LOG_TO_FILE: true/false，是否写入 log 文件夹（默认 false）
-- DOUBAO_LOG_DIR: 日志目录（默认 log）
-- DOUBAO_LOG_FILE: tee 文件名（默认 console.log）
-- DOUBAO_LOG_TEE_STDIO: true/false，是否 tee stdout/stderr（默认 true，当 LOG_TO_FILE 开启时）
-"""
-
-from __future__ import annotations
-
-import atexit
 import os
 import sys
-from typing import Optional, TextIO
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return default
-    s = str(v).strip().lower()
-    return s in {"1", "true", "yes", "y", "on"}
-
-
-class _TeeStream:
-    def __init__(self, original: TextIO, file_handle: TextIO):
-        self._original = original
-        self._file = file_handle
-
-    def write(self, s: str) -> int:
-        n = 0
-        try:
-            n = self._original.write(s)
-        except Exception:
-            pass
-        try:
-            self._file.write(s)
-        except Exception:
-            pass
-        return n
-
-    def flush(self) -> None:
-        try:
-            self._original.flush()
-        except Exception:
-            pass
-        try:
-            self._file.flush()
-        except Exception:
-            pass
-
-    def isatty(self) -> bool:
-        try:
-            return bool(getattr(self._original, "isatty")())
-        except Exception:
-            return False
-
-    @property
-    def encoding(self) -> str:
-        return getattr(self._original, "encoding", "utf-8")
-
+import logging
+from logging.handlers import TimedRotatingFileHandler
+from typing import Optional
+from schemas import LogConfig
+from config import log_config
 
 def setup_log_recording(
-    *,
-    log_to_file: Optional[bool] = None,
-    log_dir: Optional[str] = None,
-    log_file: Optional[str] = None,
-    tee_stdio: Optional[bool] = None,
+    log_config: LogConfig = log_config,
 ) -> Optional[str]:
-    """根据配置决定是否将 stdout/stderr 记录到 log 文件。
-
-    - 参数为 None 时回退到环境变量
-    - 返回 tee 文件路径；未开启时返回 None
-    """
-    if log_to_file is None:
-        log_to_file = _env_bool("DOUBAO_LOG_TO_FILE", default=False)
-    if not log_to_file:
+    
+    # 获取或创建 root logger
+    logger = logging.getLogger()
+    
+    # 清除已有的 handlers，避免重复配置
+    logger.handlers.clear()
+    
+    # 设置日志等级
+    logger.setLevel(log_config.level)
+    
+    # 日志格式
+    formatter = logging.Formatter(
+        fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # 控制台 handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_config.level)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    if not log_config.save:
         return None
 
-    if tee_stdio is None:
-        tee_stdio = _env_bool("DOUBAO_LOG_TEE_STDIO", default=True)
-    if not tee_stdio:
-        return None
-
-    if log_dir is None:
-        log_dir = os.getenv("DOUBAO_LOG_DIR", "log")
-    if log_file is None:
-        log_file = os.getenv("DOUBAO_LOG_FILE", "console.log")
-
-    log_dir = str(log_dir).strip() or "log"
-    log_file = str(log_file).strip() or "console.log"
-
-    os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, log_file)
-
-    # line-buffered: 尽量实时落盘
-    f = open(log_path, "a", encoding="utf-8", buffering=1)
-
-    # 避免重复包装
-    if not isinstance(sys.stdout, _TeeStream):
-        sys.stdout = _TeeStream(sys.stdout, f)  # type: ignore[assignment]
-    if not isinstance(sys.stderr, _TeeStream):
-        sys.stderr = _TeeStream(sys.stderr, f)  # type: ignore[assignment]
-
-    @atexit.register
-    def _close_file() -> None:
-        try:
-            f.flush()
-        except Exception:
-            pass
-        try:
-            f.close()
-        except Exception:
-            pass
-
-    return log_path
+    # 创建日志根目录
+    if not os.path.exists(log_config.save_dest):
+        os.makedirs(log_config.save_dest)
+    
+    # 使用 TimedRotatingFileHandler 实现按天自动轮转
+    # 日志文件名格式：app.log，自动轮转后变为 app.log.YYYY-MM-DD
+    log_file = os.path.join(log_config.save_dest, "app.log")
+    
+    file_handler = TimedRotatingFileHandler(
+        filename=log_file,
+        when='midnight',  # 每天午夜轮转
+        interval=1,  # 间隔1天
+        backupCount=30,  # 保留最近30天的日志
+        encoding='utf-8',
+        utc=False  # 使用本地时区
+    )
+    # 设置轮转后的文件名格式：app.log.YYYY-MM-DD
+    file_handler.suffix = "%Y-%m-%d"
+    file_handler.setLevel(log_config.level)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    logger.info(f"日志系统已初始化 - 等级: {log_config.level}, 文件: {log_file}")
+    
+    return log_file

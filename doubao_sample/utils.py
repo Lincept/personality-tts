@@ -1,10 +1,14 @@
+import logging
 import time
 from typing import Dict, List, Any
 import statistics
 import wave
+import os
 
 # 从config中导入计时开关配置
-from config import ENABLE_TIMER, input_audio_config, ENABLE_LOG
+from schemas import AudioConfig
+
+logger = logging.getLogger(__name__)
 
 class Timer:
     """增强版计时模块，专注于语音实时输入输出性能监控"""
@@ -17,7 +21,7 @@ class Timer:
         self.operation_durations: Dict[str, List[float]] = {}
         # 新增：记录音频数据量
         self.audio_data_stats: Dict[str, Dict[str, Any]] = {}
-        self.enabled = ENABLE_TIMER
+        self.enabled = True
     
     def start(self, name: str, operation_type: str = "") -> None:
         """开始计时，支持操作类型标记"""
@@ -75,25 +79,25 @@ class Timer:
     def print_audio_summary(self) -> None:
         """打印音频数据处理的详细统计"""
         if self.enabled and self.audio_data_stats:
-            print("\n=== 音频数据处理统计 ===")
+            logger.info("\n=== 音频数据处理统计 ===")
             for operation, stats in self.audio_data_stats.items():
-                print(f"{operation}:")
-                print(f"  数据块数: {stats['count']}")
-                print(f"  总数据量: {stats['total_size']} bytes")
-                print(f"  平均数据块大小: {stats['avg_size']:.1f} bytes")
-            print("========================")
+                logger.info(f"{operation}:")
+                logger.info(f"  数据块数: {stats['count']}")
+                logger.info(f"  总数据量: {stats['total_size']} bytes")
+                logger.info(f"  平均数据块大小: {stats['avg_size']:.1f} bytes")
+            logger.info("========================")
     
     def print_operation_summary(self) -> None:
         """打印重复操作的统计摘要"""
         if self.enabled and self.operation_durations:
-            print("\n=== 实时操作性能统计 ===")
+            logger.info("\n=== 实时操作性能统计 ===")
             for operation_type, stats in self.get_all_operation_stats().items():
-                print(f"{operation_type}:")
-                print(f"  操作次数: {stats['count']}")
-                print(f"  平均耗时: {stats['avg']:.4f} 秒")
-                print(f"  最小耗时: {stats['min']:.4f} 秒")
-                print(f"  最大耗时: {stats['max']:.4f} 秒")
-            print("========================")
+                logger.info(f"{operation_type}:")
+                logger.info(f"  操作次数: {stats['count']}")
+                logger.info(f"  平均耗时: {stats['avg']:.4f} 秒")
+                logger.info(f"  最小耗时: {stats['min']:.4f} 秒")
+                logger.info(f"  最大耗时: {stats['max']:.4f} 秒")
+            logger.info("========================")
     
     def get_all_operation_stats(self) -> Dict[str, Dict[str, float]]:
         """获取所有操作类型的统计"""
@@ -104,10 +108,10 @@ class Timer:
         if self.enabled:
             self.print_operation_summary()
             self.print_audio_summary()
-            print("\n=== 主要步骤耗时摘要 ===")
+            logger.info("\n=== 主要步骤耗时摘要 ===")
             for name, duration in sorted(self.durations.items()):
-                print(f"{name}: {duration:.4f} 秒")
-            print("==================")
+                logger.info(f"{name}: {duration:.4f} 秒")
+            logger.info("==================")
     
     def reset(self) -> None:
         """重置计时器"""
@@ -117,45 +121,28 @@ class Timer:
         self.operation_durations.clear()
         self.audio_data_stats.clear()
 
-def normalize_messages(messages: Dict) -> List[Dict]:
-    target = []
-    for _, v in messages.items():
-        user_content = (v.get("user") or "").strip()
-        assistant_content = (v.get("assistant") or "").strip()
-        if not user_content or not assistant_content:
-            continue
-        if user_content:
-            target.append({
-                "role": "user",
-                "content": user_content
-            })
-        if assistant_content:
-            target.append({
-                "role": "assistant",
-                "content": assistant_content
-            })
-    return target
-
-def save_input_pcm_to_wav(pcm_data: bytes, filename: str) -> None:
+def save_input_pcm_to_wav(pcm_data: bytes, filename: str, audio_config: AudioConfig) -> None:
+    if not os.path.exists(os.path.dirname(filename)):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
     """保存PCM数据为WAV文件"""
     with wave.open(filename, 'wb') as wf:
-        wf.setnchannels(input_audio_config["channels"])
+        wf.setnchannels(audio_config.channels)
         wf.setsampwidth(2)  # paInt16 = 2 bytes
-        wf.setframerate(input_audio_config["sample_rate"])
+        wf.setframerate(audio_config.sample_rate)
         wf.writeframes(pcm_data)
 
 def save_output_to_file(audio_data: bytes, filename: str) -> None:
     """保存原始PCM音频数据到文件"""
+    if not os.path.exists(os.path.dirname(filename)):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
     if not audio_data:
-        if ENABLE_LOG:
-            print("No audio data to save.")
+        logger.warning("No audio data to save.")
         return
     try:
         with open(filename, 'wb') as f:
             f.write(audio_data)
     except IOError as e:
-        if ENABLE_LOG:
-            print(f"Failed to save pcm file: {e}")
+        logger.error(f"Failed to save pcm file: {e}")
 
 # 创建全局计时器实例
 timer = Timer()

@@ -1,34 +1,38 @@
 import gzip
+import logging
 import json
 from typing import Dict, Any
+from dataclasses import asdict
 
 import websockets
-
-import config
-import protocol
-from utils import timer
+from client import protocol
+from schemas import WSConnectConfig, DoubaoRealTimeConfig
 
 
+
+logger = logging.getLogger(__name__)
 class RealtimeDialogClient:
-    def __init__(self, config: Dict[str, Any], session_id: str, output_audio_format: str = "pcm",
-                 mod: str = "audio", recv_timeout: int = 10) -> None:
-        self.config = config
-        self.logid = ""
+    def __init__(self, ws_config: WSConnectConfig, session_config: DoubaoRealTimeConfig, session_id: str, output_audio_format: str = "pcm",
+                 mod: str = "audio") -> None:
+        self.ws_config = ws_config
+        self.session_config = session_config
+        self.logid = None
         self.session_id = session_id
         self.output_audio_format = output_audio_format
         self.mod = mod
-        self.recv_timeout = recv_timeout
         self.ws: websockets.ClientConnection = None # type: ignore
 
     async def connect(self) -> None:
         """建立WebSocket连接"""
-        timer.start("connect")
-        if config.ENABLE_LOG:
-            print(f"url: {self.config['base_url']}, headers: {self.config['headers']}")
+        safe_headers = dict(self.ws_config.headers or {})
+        if 'X-Api-Access-Key' in safe_headers and safe_headers['X-Api-Access-Key']:
+            ak = str(safe_headers['X-Api-Access-Key'])
+            safe_headers['X-Api-Access-Key'] = ak[:4] + "***" + ak[-4:]
+        logger.info(f"url: {self.ws_config.base_url}, headers: {safe_headers}")
         # Use 'additional_headers' to pass headers through websockets without triggering create_connection kwargs error
         self.ws = await websockets.connect(
-            self.config['base_url'],
-            additional_headers=self.config['headers'],
+            self.ws_config.base_url,
+            additional_headers=self.ws_config.headers,
             ping_interval=None
         )
         # Get handshake response header 'X-Tt-Logid' in a version-robust way.
@@ -54,8 +58,7 @@ class RealtimeDialogClient:
             # Ignore errors reading headers; leave logid as None
             self.logid = None
 
-        if config.ENABLE_LOG:
-            print(f"dialog server response logid: {self.logid}")
+        logger.info(f"dialog server response logid: {self.logid}")
 
         # StartConnection request
         start_connection_request = bytearray(protocol.generate_header())
@@ -66,18 +69,14 @@ class RealtimeDialogClient:
         start_connection_request.extend(payload_bytes)
         await self.ws.send(start_connection_request)
         response = await self.ws.recv()
-        if config.ENABLE_LOG:
-            print(f"StartConnection response: {protocol.parse_response(response)}")
+        logger.info(f"StartConnection response: {protocol.parse_response(response)}")
 
-        # 扩大这个参数，可以在一段时间内保持静默，主要用于text模式，参数范围[10,120]
-        config.start_session_req["dialog"]["extra"]["recv_timeout"] = self.recv_timeout
         # 这个参数，在text或者audio_file模式，可以在一段时间内保持静默
-        config.start_session_req["dialog"]["extra"]["input_mod"] = self.mod
+        self.session_config.dialog["extra"]["input_mod"] = self.mod
         # StartSession request
         if self.output_audio_format == "pcm_s16le":
-            config.start_session_req["tts"]["audio_config"]["format"] = "pcm_s16le"
-        request_params = config.start_session_req
-        payload_bytes = str.encode(json.dumps(request_params))
+            self.session_config.tts["audio_config"]["format"] = "pcm_s16le"
+        payload_bytes = str.encode(json.dumps(asdict(self.session_config)))
         payload_bytes = gzip.compress(payload_bytes)
         start_session_request = bytearray(protocol.generate_header())
         start_session_request.extend(int(100).to_bytes(4, 'big'))
@@ -87,9 +86,7 @@ class RealtimeDialogClient:
         start_session_request.extend(payload_bytes)
         await self.ws.send(start_session_request)
         response = await self.ws.recv()
-        if config.ENABLE_LOG:
-            print(f"StartSession response: {protocol.parse_response(response)}")
-        timer.end("connect")
+        logger.info(f"StartSession response: {protocol.parse_response(response)}")
 
     async def say_hello(self) -> None:
         """发送Hello消息"""
@@ -130,8 +127,7 @@ class RealtimeDialogClient:
             "end": end,
             "content": content,
         }
-        if config.ENABLE_LOG:
-            print(f"ChatTTSTextRequest payload: {payload}")
+        logger.info(f"ChatTTSTextRequest payload: {payload}")
         payload_bytes = str.encode(json.dumps(payload))
         payload_bytes = gzip.compress(payload_bytes)
 
@@ -150,8 +146,7 @@ class RealtimeDialogClient:
         payload = {
             "external_rag": external_rag,
         }
-        if config.ENABLE_LOG:
-            print(f"ChatRAGTextRequest payload: {payload}")
+        logger.info(f"ChatRAGTextRequest payload: {payload}")
         payload_bytes = str.encode(json.dumps(payload))
         payload_bytes = gzip.compress(payload_bytes)
 
@@ -168,8 +163,7 @@ class RealtimeDialogClient:
         payload = {
             "items": items,
         }
-        if config.ENABLE_LOG:
-            print(f"ConversationCreate payload: {payload}")
+        logger.info(f"ConversationCreate payload: {payload}")
         payload_bytes = str.encode(json.dumps(payload))
         payload_bytes = gzip.compress(payload_bytes)
 
@@ -194,7 +188,6 @@ class RealtimeDialogClient:
         await self.ws.send(task_request)
 
     async def receive_server_response(self) -> Dict[str, Any]:
-        timer.start("receive_server_response")
         try:
             # 检查连接是否存在
             if self.ws is None:
@@ -202,10 +195,8 @@ class RealtimeDialogClient:
             
             response = await self.ws.recv()
             data = protocol.parse_response(response)
-            timer.end("receive_server_response")
             return data
         except Exception as e:
-            timer.end("receive_server_response")
             raise Exception(f"Failed to receive message: {e}")
 
     async def finish_session(self):
@@ -228,12 +219,10 @@ class RealtimeDialogClient:
         finish_connection_request.extend(payload_bytes)
         await self.ws.send(finish_connection_request)
         response = await self.ws.recv()
-        if config.ENABLE_LOG:
-            print(f"FinishConnection response: {protocol.parse_response(response)}")
+        logger.info(f"FinishConnection response: {protocol.parse_response(response)}")
 
     async def close(self) -> None:
         """关闭WebSocket连接"""
         if self.ws:
-            if config.ENABLE_LOG:
-                print(f"Closing WebSocket connection...")
+            logger.info(f"Closing WebSocket connection...")
             await self.ws.close()
